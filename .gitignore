@@ -1,0 +1,41 @@
+# ---- Build artifacts ----
+.cache
+/build/
+/build_*/
+*.o
+*.a
+*.so
+*.lo
+*.la
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+compile_commands.json
+
+# Protobuf/gRPC generated code (generated at build time, not committed).
+# Only ignore generated files; keep proto/*.proto sources.
+*.pb.cc
+*.pb.h
+*.grpc.pb.cc
+*.grpc.pb.h
+
+# ---- Logs & runtime data ----
+/logs/
+*.log
+
+# Kafka / runtime data (if placed inside the repo)
+kafka-data/
+/data/
+
+# ---- Editor / IDE ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ---- Other ----
+docs/
