@@ -270,3 +270,6 @@ bool MySqlConnectionPool::ValidateConnection(MYSQL** conn) {
 }
 
 }  // namespace sparkpush
+
+//
+

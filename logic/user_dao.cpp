@@ -96,6 +96,11 @@ bool UserDao::CreateUser(const std::string& account, const std::string& name,
     return true;
 }
 
+// 按账号去 user 表查一条完整用户记录
+// 查到就填进 User 结构体并返回 true 查不到返回 false
+// 并把 err_msg 设成 "user not found"
+
+// 真正交付的是登录需要的密码哈希等字段
 bool UserDao::GetUserByAccount(const std::string& account, User* user,
                                std::string* err_msg) {
     if (!pool_) {

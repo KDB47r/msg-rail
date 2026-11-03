@@ -20,3 +20,5 @@ struct UpstreamMessageMeta {
 bool ParseUpstreamMessage(const std::string& json, UpstreamMessageMeta* meta);
 
 }  // namespace sparkpush
+
+//

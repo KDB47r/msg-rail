@@ -43,6 +43,7 @@ void LogicServiceImpl::SetError(ErrorInfo* e, int code,
     // 热路径：不打日志
 }
 
+// read
 // 校验 token，并把用户连接写入 Redis 路由表。
 ::grpc::Status LogicServiceImpl::VerifyToken(
     ::grpc::ServerContext*, const ::sparkpush::VerifyTokenRequest* request,
@@ -74,6 +75,8 @@ void LogicServiceImpl::SetError(ErrorInfo* e, int code,
     return ::grpc::Status::OK;
 }
 
+// unary
+// read
 // 处理上行消息：分配会话序号、查路由并投递 Kafka。
 ::grpc::Status LogicServiceImpl::SendUpstreamMessage(
     ::grpc::ServerContext*, const ::sparkpush::UpstreamMessageRequest* request,
@@ -83,6 +86,7 @@ void LogicServiceImpl::SetError(ErrorInfo* e, int code,
     return ::grpc::Status::OK;
 }
 
+// read
 // 处理连接断开，删除对应的 Redis 路由。
 ::grpc::Status LogicServiceImpl::UserOffline(
     ::grpc::ServerContext*, const ::sparkpush::UserOfflineRequest* request,
@@ -227,6 +231,8 @@ void LogicServiceImpl::SetError(ErrorInfo* e, int code,
     return ::grpc::Status::OK;
 }
 
+// read
+
 // ============================================================================
 // 消息处理核心逻辑
 // 处理流程：
@@ -341,6 +347,7 @@ void LogicServiceImpl::HandleUpstreamMessage(
         return;
     }
 
+    // 时间戳
     int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch())
         .count();
@@ -439,6 +446,7 @@ void LogicServiceImpl::HandleUpstreamMessage(
     }
 }
 
+// read
 // 从 Redis 路由中删除指定连接。
 void LogicServiceImpl::HandleUserOffline(
     const ::sparkpush::UserOfflineRequest& request,
@@ -504,6 +512,8 @@ void LogicServiceImpl::HandleRoomLeave(
     SetError(response->mutable_error(), 0, "ok");
 }
 
+
+// read
 // gRPC 双向流实现：单条持久连接复用多种消息类型
 // 优势：消除每次 RPC 的连接建立/销毁开销，吞吐量从 ~16K 提升到 ~33K QPS
 // 通过 oneof payload 区分不同消息类型（上行消息/下线通知/房间加入离开），

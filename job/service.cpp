@@ -6,6 +6,7 @@ namespace sparkpush {
 
 JobRunner::JobRunner(const Config& cfg) : cfg_(cfg) {}
 
+// read
 // 初始化推送和持久化两个处理器。
 bool JobRunner::Init() {
     LogInfo(
@@ -29,6 +30,7 @@ bool JobRunner::Init() {
     return true;
 }
 
+// read
 // 启动推送和持久化处理器。
 void JobRunner::Start() {
     LogInfo("[JobRunner] Starting handlers...");

@@ -34,6 +34,7 @@ void AddCORSHeaders(HttpResponse* resp) {
     resp->addHeader("Access-Control-Max-Age", "86400");
 }
 
+// read
 bool ParseJsonBody(const std::string& body, nlohmann::json* out) {
     if (!out) return false;
     if (body.empty()) {
@@ -50,20 +51,29 @@ bool ParseJsonBody(const std::string& body, nlohmann::json* out) {
     }
 }
 
+//read
+// JSON 语法检查 + 必需字段检查 + 字段类型检查 + 取值 
+// 不检查账号/密码是否为空、长度是否够、密码是不是 MD5 这些由调用方负责
+// 密码长度则主要在前端检查（index.html:589，至少 6 位）
+// 后端登录只把传进来的 password 和数据库里的 password_hash 做字符串比较
+// 因为前端已经做过 MD5
 bool ParseJsonAccountPassword(const std::string& body, std::string* account,
                               std::string* password) {
     if (!account || !password) return false;
     *account = "";
     *password = "";
 
-    try {
+    try { // JSON 语法解析，非法就抛异常
         auto j = nlohmann::json::parse(body);
+        // 必需字段缺失
         if (!j.contains("account") || !j.contains("password")) {
             return false;
         }
+        // 字段类型必须是字符串
         if (!j["account"].is_string() || !j["password"].is_string()) {
             return false;
         }
+        // 取值
         *account = j["account"].get<std::string>();
         *password = j["password"].get<std::string>();
         return true;
@@ -75,6 +85,8 @@ bool ParseJsonAccountPassword(const std::string& body, std::string* account,
     }
 }
 
+// read
+// 把http请求里面的account passwd 拿出来 供给后面查redis
 bool ParseJsonRegister(const std::string& body, std::string* account,
                        std::string* password, std::string* name) {
     if (!account || !password || !name) return false;
@@ -105,6 +117,7 @@ bool ParseJsonRegister(const std::string& body, std::string* account,
     }
 }
 
+//read
 // 生成 24 字节随机 token，并转成 48 位十六进制字符串。
 std::string GenerateSecureToken() {
     static constexpr int kTokenBytes = 24;  // 192 bit → 32 chars hex
@@ -151,6 +164,9 @@ HttpResponse::HttpStatusCode HttpStatusForCode(int code) {
     }
 }
 
+// read 
+// 把数据填进 HttpResponse 对象
+// 真正通过 socket 发给浏览器，是 handler 返回之后由 HTTP 服务器做的
 void WriteJson(HttpResponse* resp, int code, const std::string& message,
                const std::string& data_json,
                HttpResponse::HttpStatusCode http_code) {
@@ -175,6 +191,8 @@ void WriteJson(HttpResponse* resp, int code, const std::string& message,
 
 }  // namespace detail
 
+
+// read
 HttpApiServer::HttpApiServer(uint16_t port, ConversationStore* store,
                              UserDao* user_dao, GroupDao* group_dao,
                              GroupMemberDao* group_member_dao,
@@ -215,24 +233,21 @@ void HttpApiServer::onRequest(const HttpRequest& req, HttpResponse* resp) {
 
     // 路由表：从 path 映射到成员函数指针
     static const std::unordered_map<std::string, Handler> kRouteTable = {
-        {"/api/login", &HttpApiServer::handleLogin},
-        {"/api/register", &HttpApiServer::handleRegister},
-        {"/api/message/send", &HttpApiServer::handleSendMessage},
-        {"/api/session/history", &HttpApiServer::handleHistory},
-        {"/api/session/mark_read", &HttpApiServer::handleMarkRead},
-        {"/api/session/unread", &HttpApiServer::handleUnread},
+        {"/api/login", &HttpApiServer::handleLogin}, // 登录 read
+        {"/api/register", &HttpApiServer::handleRegister}, // 注册 read
+        {"/api/message/send", &HttpApiServer::handleSendMessage}, // http 消息 压测使用 curl调试 服务端/机器人发消息(无浏览器/不适合维护ws http更自然)
+        {"/api/session/history", &HttpApiServer::handleHistory}, // 拉取历史 read
+        {"/api/session/mark_read", &HttpApiServer::handleMarkRead}, // 更新已读游标 read
+        {"/api/session/list_single", &HttpApiServer::handleSingleSessionList}, // 刷新单聊会话列表 read
+        {"/api/session/unread", &HttpApiServer::handleUnread}, // 获取未读消息数 read
         {"/api/chatroom/join", &HttpApiServer::handleChatroomJoin},
         {"/api/chatroom/leave", &HttpApiServer::handleChatroomLeave},
-        {"/api/chatroom/unsubscribe",
-         &HttpApiServer::handleChatroomUnsubscribe},
-        {"/api/chatroom/online_count",
-         &HttpApiServer::handleChatroomOnlineCount},
+        {"/api/chatroom/unsubscribe",&HttpApiServer::handleChatroomUnsubscribe},
+        {"/api/chatroom/online_count",&HttpApiServer::handleChatroomOnlineCount},
         {"/api/danmaku/send", &HttpApiServer::handleDanmakuSend},
         {"/api/danmaku/list", &HttpApiServer::handleDanmakuList},
-        {"/api/session/list_single", &HttpApiServer::handleSingleSessionList},
         {"/api/chatroom/list", &HttpApiServer::handleChatroomList},
-        {"/api/admin/chatroom/create",
-         &HttpApiServer::handleAdminCreateChatroom},
+        {"/api/admin/chatroom/create",&HttpApiServer::handleAdminCreateChatroom},
         {"/api/admin/chatroom/list", &HttpApiServer::handleAdminListChatroom},
         {"/api/admin/broadcast", &HttpApiServer::handleAdminBroadcast},
     };
@@ -240,33 +255,10 @@ void HttpApiServer::onRequest(const HttpRequest& req, HttpResponse* resp) {
     const std::string& path = req.path();
 
     // ---- 运维端点（无需鉴权） ----
-    if (path == "/health") {
-        resp->setStatusCode(HttpResponse::k200Ok);
-        resp->setContentType("application/json; charset=utf-8");
-        detail::AddCORSHeaders(resp);
-        // 检查关键依赖是否可用
-        bool redis_ok = (redis_store_ != nullptr);
-        bool store_ok = (store_ != nullptr);
-        std::string status = (redis_ok && store_ok) ? "ok" : "degraded";
-        resp->setBody("{\"status\":\"" + status +
-                      "\""
-                      ",\"redis\":" +
-                      std::string(redis_ok ? "true" : "false") + ",\"store\":" +
-                      std::string(store_ok ? "true" : "false") + "}");
-        return;
-    }
-    if (path == "/metrics") {
-        resp->setStatusCode(HttpResponse::k200Ok);
-        resp->setContentType("text/plain; charset=utf-8");
-        detail::AddCORSHeaders(resp);
-        // Prometheus-compatible 简易指标（可扩展）
-        std::ostringstream m;
-        m << "# HELP sparkpush_up Whether the service is up\n"
-          << "# TYPE sparkpush_up gauge\n"
-          << "sparkpush_up 1\n";
-        resp->setBody(m.str());
-        return;
-    }
+    // /health 是**“服务还活着吗”的探活接口，
+    // /metrics 是“给 Prometheus 抓指标”**的监控接口；
+    // 两者都是无鉴权的运维端点，所以放在业务路由表之前单独处理，处理完 return，
+    // 不参与 /api/... 的业务分发。
 
     auto it = kRouteTable.find(path);
     if (it == kRouteTable.end()) {
@@ -287,6 +279,7 @@ void HttpApiServer::WriteError(HttpResponse* resp, int code,
                       detail::HttpStatusForCode(code));
 }
 
+//read
 // 限制接口只接受 POST 请求。
 bool HttpApiServer::RequirePost(const HttpRequest& req, HttpResponse* resp) {
     if (req.method() != HttpRequest::kPost) {
@@ -305,6 +298,7 @@ bool HttpApiServer::RequireAdmin(int64_t uid, HttpResponse* resp) {
     return true;
 }
 
+// read
 // ---- 统一 Token 鉴权 ----
 // 从 Authorization: Bearer <token> 头提取 token，降级到 JSON body 的 "token"
 // 字段。 校验成功返回 user_id (>0)；失败则写入 401 响应并返回 0。

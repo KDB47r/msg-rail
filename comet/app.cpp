@@ -21,6 +21,8 @@ void RunComet(const Config& cfg) {
 
     std::string addr =
         cfg.listen_addr + ":" + std::to_string(cfg.comet_grpc_port);
+
+    //grpc
     grpc::ServerBuilder builder;
     CometServiceImpl grpcService(&server);
     builder.AddListeningPort(addr, grpc::InsecureServerCredentials());
@@ -28,6 +30,7 @@ void RunComet(const Config& cfg) {
     std::unique_ptr<grpc::Server> grpcServer = builder.BuildAndStart();
     LogInfo("Comet gRPC server listening on " + addr);
 
+    //kill/ctrl+C 优雅关闭
     InstallSignalHandler([&server, &grpcServer]() {
         server.Stop();
         if (grpcServer) grpcServer->Shutdown();
@@ -35,6 +38,8 @@ void RunComet(const Config& cfg) {
 
     std::thread grpc_thread([&grpcServer]() { grpcServer->Wait(); });
 
+
+    //  *** 
     // 阻塞在 asio io_context 上，直到 Stop() 被触发。
     server.Run();
 
@@ -46,3 +51,5 @@ void RunComet(const Config& cfg) {
 }
 
 }  // namespace sparkpush
+
+//

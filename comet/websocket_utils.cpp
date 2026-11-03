@@ -81,3 +81,5 @@ bool ParseUpstreamMessage(const std::string& json_str,
 }
 
 }  // namespace sparkpush
+
+// 从json解析字段 tpye字段存meta 不碰不解析msg

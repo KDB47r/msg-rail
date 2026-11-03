@@ -42,7 +42,19 @@ CometServer::CometServer(const Config& cfg)
     comet_id_ = cfg.comet_id;
     channel_ = grpc::CreateChannel(cfg.logic_grpc_target,
                                    grpc::InsecureChannelCredentials());
+    /*
+    CreateChannel 是同步函数调用，但它不会等待连接建立成功
+    它只是创建一个 channel 对象，真正的 TCP 连接、重连、名称解析由 gRPC 在后台完成。
+    所以即使 Logic 还没启动，这一行通常也会立刻返回。
+    */
     logic_stub_ = sparkpush::LogicService::NewStub(channel_);
+    /*
+    Stub 是 gRPC 的客户端代理对象。
+    logic_stub_->VerifyToken(...)       → 调用 Logic 的 VerifyToken
+    logic_stub_->SendUpstreamMessage(...) → 调用 Logic 的上行消息接口
+    logic_stub_->UserOffline(...)       → 调用 Logic 的下线接口
+    NewStub 只是把 stub 和 channel 绑定起来，不会发起任何 RPC。
+    */
     stream_client_ =
         std::make_unique<LogicStreamClient>(logic_stub_.get(), stream_count_);
 
@@ -199,6 +211,7 @@ void CometServer::OnClose(const ConnHandle& hdl) {
     registry_.RemoveConn(hdl, &user_id, &left_rooms);
     const std::string conn_id = ctx ? ctx->conn_id : std::string{};
     if (user_id > 0) {
+        // func调用 -> rpc调用
         NotifyUserOffline(user_id, conn_id);
         for (int64_t rid : left_rooms) NotifyRoomLeave(rid, user_id);
     }
@@ -256,7 +269,7 @@ void CometServer::AddToHeartbeatBucket(
     bucket.entries.push_back({ctx->handle, ctx});
 }
 
-// 扫描一个心跳桶，超时就关闭连接。
+// 扫描一个心跳桶，超时就关闭连接。***
 void CometServer::ScanNextHeartbeatBucket() {
     struct HeartbeatAction {
         ConnHandle handle;
@@ -364,6 +377,7 @@ void CometServer::NotifyUserOffline(int64_t user_id,
         req.set_conn_id(conn_id);
         SimpleReply rep;
         grpc::ClientContext ctx;
+        // rpc 调用
         auto status = stub->UserOffline(&ctx, req, &rep);
         if (!status.ok()) {
             LogError("UserOffline RPC failed for user " +
@@ -375,7 +389,7 @@ void CometServer::NotifyUserOffline(int64_t user_id,
     });
 }
 
-// 异步通知 Logic 用户加入房间。
+// 异步通知 Logic 用户加入房间。 grpc_unary -> logic
 void CometServer::NotifyRoomJoin(int64_t room_id, int64_t user_id) {
     if (!logic_stub_) return;
     auto* stub = logic_stub_.get();
@@ -409,7 +423,7 @@ void CometServer::NotifyRoomLeave(int64_t room_id, int64_t user_id) {
 
 // __COMET_SERVER_APPEND2__
 
-// 解析上行 JSON 并转成 gRPC 请求发给 Logic。
+// 解析上行 JSON 并转成 gRPC 请求发给 Logic。 ***
 void CometServer::HandleTextMessage(const ConnHandle& hdl,
                                     const ConnContext& ctx,
                                     const std::string& payload) {
@@ -474,11 +488,12 @@ void CometServer::HandleTextMessage(const ConnHandle& hdl,
         SendText(hdl, R"({"type":"error","message":"logic not available"})");
         return;
     }
-
+    //记录 Comet 收到消息的服务器时间
     int64_t received_time_ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch())
             .count();
+    //把前面解析出来的字段，填进 protobuf 请求
     UpstreamMessageRequest req;
     req.set_from_user_id(ctx.user_id);
     req.set_scene(SceneFromString(scene));
@@ -495,16 +510,27 @@ void CometServer::HandleTextMessage(const ConnHandle& hdl,
         req.set_video_id(meta.video_id);
         req.set_timeline_ms(meta.timeline_ms);
     }
+    // 整条原始 JSON 原样放进去
     req.set_content_json(payload);
 
+    // 请求组装好后，Comet 有两种方式把它交给 Logic
     const std::string client_msg_id = req.client_msg_id();
     ConnHandle h = hdl;
+    //路径 A：双向流
+    /*
+    1. 把 UpstreamMessageRequest 包进 StreamMessage 的 oneof upstream；
+    2. LogicStreamClient::Send() 分配 request_id，选一条流发出去；
+    3. Logic 处理完，通过同一条流返回 StreamResponse；
+    4. Comet 的 reader 线程根据 request_id 找到这个回调；
+    5. 回调里组装 JSON，调用 SendText(h, ...) 回给浏览器。
+    */
     if (use_stream_ && stream_client_ && stream_client_->Running()) {
         StreamMessage stream_msg;
         *stream_msg.mutable_upstream() = req;
         stream_client_->Send(
             std::move(stream_msg),
             [this, h, client_msg_id](const StreamResponse& resp) {
+                 // 收到 Logic 的响应后，给浏览器回 ack/error
                 nlohmann::json result;
                 result["client_msg_id"] = client_msg_id;
                 if (resp.error().code() != 0) {
@@ -517,7 +543,14 @@ void CometServer::HandleTextMessage(const ConnHandle& hdl,
                 }
                 SendText(h, result.dump());
             });
-    } else {
+    } 
+    //路径 B：线程池 + unary
+    /*
+    1. 把请求丢进 grpc_pool_；
+    2. 某个工作线程同步调用 SendUpstreamMessage；
+    3. RPC 返回后组装 ack，回给浏览器。
+    */
+    else {
         auto* stub = logic_stub_.get();
         grpc_pool_.Submit([this, h, stub, req, client_msg_id]() {
             UpstreamMessageReply rep;

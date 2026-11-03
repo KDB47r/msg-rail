@@ -76,6 +76,7 @@ bool ConversationStore::AppendMessage(const Session& session, int64_t sender_id,
     return true;
 }
 
+// read
 // 用 Redis 原子递增分配会话序号，首次从 MySQL 恢复下限。
 bool ConversationStore::AllocateMessageSeq(const std::string& session_id,
                                            int64_t* next_seq,
@@ -106,6 +107,7 @@ bool ConversationStore::AllocateMessageSeq(const std::string& session_id,
     return true;
 }
 
+// read
 // 按序号分页读取会话历史消息。
 bool ConversationStore::GetHistory(const std::string& session_id,
                                    int64_t anchor_seq, int limit,
@@ -138,6 +140,7 @@ bool ConversationStore::MarkRead(int64_t user_id, const std::string& session_id,
     return true;
 }
 
+// read
 // 批量计算用户各会话的未读数和最后序号。
 bool ConversationStore::GetUnread(int64_t user_id,
                                   const std::string& session_id,

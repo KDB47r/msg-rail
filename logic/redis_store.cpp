@@ -125,6 +125,7 @@ bool RedisStore::AddRoute(int64_t user_id, const std::string& comet_id,
     return ok;
 }
 
+// read
 // 从用户路由 Hash 中删除一条连接。
 bool RedisStore::RemoveRoute(int64_t user_id, const std::string& conn_id) {
     if (!pool_) return false;
@@ -145,6 +146,7 @@ bool RedisStore::RemoveRoute(int64_t user_id, const std::string& conn_id) {
     return ok;
 }
 
+// read
 // 用户路由查询（带本地缓存）：两级缓存（本地 TTL 1s + Redis HASH），
 // shared_mutex 读写锁，读操作不互斥。
 // 查询用户所在的 Comet 列表（带本地缓存）。
@@ -152,6 +154,7 @@ bool RedisStore::GetUserRoutes(int64_t user_id,
                                std::vector<std::string>* comets) {
     if (!comets) return false;
 
+    // 1. 查本地缓存
     auto now = std::chrono::steady_clock::now();
     {
         std::shared_lock<std::shared_mutex> lock(route_cache_mutex_);
@@ -162,9 +165,11 @@ bool RedisStore::GetUserRoutes(int64_t user_id,
         }
     }
 
+    // 2. 缓存未命中 查redis
     std::vector<std::string> redis_comets;
     if (!GetUserRoutesFromRedis(user_id, &redis_comets)) return false;
 
+    // 3. 写回本地缓存
     {
         std::unique_lock<std::shared_mutex> lock(route_cache_mutex_);
         RouteCacheEntry entry;
@@ -177,6 +182,7 @@ bool RedisStore::GetUserRoutes(int64_t user_id,
     return true;
 }
 
+// read
 // 从 Redis 读取并去重用户所在的 Comet 列表。
 bool RedisStore::GetUserRoutesFromRedis(int64_t user_id,
                                         std::vector<std::string>* comets) {
@@ -462,6 +468,7 @@ bool RedisStore::RoomLeaveAtomic(int64_t room_id, const std::string& comet_id,
     return ok;
 }
 
+// read
 // 会话消息序号生成：初始化标记存在时，单次 EVAL 原子 INCR。
 // key 里的 {<sid>} hash tag 让 seq、初始化标记和 read_seq 落在同一 slot。
 // 用 Lua 原子递增会话消息序号。
@@ -472,10 +479,13 @@ RedisStore::SessionSeqStatus RedisStore::IncrSessionMsgSeq(
     redisContext* ctx = guard.get();
     if (!ctx) return SessionSeqStatus::kError;
 
+    // 执行lua
     redisReply* reply = (redisReply*)redisCommand(
         ctx,
         "EVAL %s 2 session:{%s}:seq session:{%s}:seq_initialized",
         kIncrSessionSeqLua, session_id.c_str(), session_id.c_str());
+
+    // 处理网络/协议失败
     if (!reply) {
         guard.MarkBroken();
         return SessionSeqStatus::kError;

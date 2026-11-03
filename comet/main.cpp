@@ -9,6 +9,13 @@ namespace {
 
 enum class ArgParseResult { kOk, kHelp, kError };
 
+ /*
+  * kok 参数正常
+  * kHelp 输入参数 -h/--help
+  * kError 参数错误 如少选未知项 缺少路径 
+  */
+
+//打印用法说明。prog 是程序名，比如 ./comet_server，这样提示里能显示正确的命令。
 void PrintUsage(const char* prog) {
     std::fprintf(stderr,
                  "用法: %s [--config <配置文件>] [config_path]\n"
@@ -16,6 +23,7 @@ void PrintUsage(const char* prog) {
                  prog);
 }
 
+//从命令行里找出配置文件路径
 ArgParseResult ParseConfigPath(int argc, char** argv,
                                std::string* config_path) {
     const std::string default_path = "conf/comet.conf";
@@ -49,6 +57,7 @@ ArgParseResult ParseConfigPath(int argc, char** argv,
 }  // namespace
 
 int main(int argc, char** argv) {
+    //解析参数
     std::string config_path;
     ArgParseResult result = ParseConfigPath(argc, argv, &config_path);
     if (result == ArgParseResult::kHelp) {
@@ -65,9 +74,17 @@ int main(int argc, char** argv) {
     sparkpush::InitLogging("comet",
                            /*also_stdout=*/false,
                            sparkpush::kDefaultLogRotateBytes, cfg.log_level);
-
+    //启动comet
     sparkpush::RunComet(cfg);
-
+    //关闭日志
     sparkpush::ShutdownLogging();
+/*
+  - flush() 把缓冲区里的日志刷到磁盘；
+  - 释放 spdlog 的全局 logger；
+  - 调用 spdlog::shutdown()。
+*/
+
     return 0;
 }
+
+//

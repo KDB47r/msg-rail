@@ -15,6 +15,7 @@ PushHandler::PushHandler(const Config& cfg)
 
 PushHandler::~PushHandler() { Stop(); }
 
+// 
 // 初始化推送/广播两个 Kafka 消费者和流连接。
 bool PushHandler::Init() {
     ParseCometTargets();
@@ -26,10 +27,18 @@ bool PushHandler::Init() {
 
     // 推送消费组：spark_push_push_group
     KafkaConsumer::Options opts;
+    // 关闭自动提交
     opts.enable_auto_commit = false;
-    opts.worker_threads =
-        static_cast<size_t>(std::max(1, cfg_.job_worker_threads));
+    /*
+    消费一条消息
+    → 交给 worker 执行 HandleMessage
+    → 执行完成
+    → KafkaConsumer 才手动 commitAsync(offset + 1)
+    */
+    opts.worker_threads = static_cast<size_t>(std::max(1, cfg_.job_worker_threads));
     opts.max_inflight = static_cast<size_t>(std::max(1, cfg_.job_max_inflight));
+    // 生成推送消费者专属的 group id
+    /* kafka_consumer_group=spark_push_group */
     std::string push_group = cfg_.kafka_consumer_group + "_push";
 
     if (!push_consumer_.Init(
@@ -127,6 +136,7 @@ bool PushHandler::ReconnectStream(const std::string& comet_id,
     return true;
 }
 
+// read
 // 流模式写入线程：每个 Comet 对应一个独立的写入线程
 // 从消息队列中取出请求，通过 gRPC ClientWriter 流式发送
 // 断线时自动重连（指数退避 500ms → 8s），并重试当前消息
@@ -188,6 +198,7 @@ void PushHandler::StreamWriterLoop(const std::string& comet_id) {
     }
 }
 
+// read
 // 把推送任务放入对应 Comet 的发送队列。
 void PushHandler::SendToStream(const std::string& comet_id,
                                PushToCometRequest req) {
@@ -196,6 +207,7 @@ void PushHandler::SendToStream(const std::string& comet_id,
         // 流不存在，回退到同步调用
         LogInfo("[PushHandler] No stream for comet=" + comet_id +
                 ", fallback to sync RPC");
+        // unary
         ProcessPushRequest(req);
         return;
     }
@@ -234,6 +246,7 @@ void PushHandler::Stop() {
     LogInfo("[PushHandler] Stopped");
 }
 
+// read
 // 解析配置中的 comet_id=host:port 列表。
 void PushHandler::ParseCometTargets() {
     comet_addrs_.clear();
@@ -269,6 +282,7 @@ CometService::Stub* PushHandler::GetStub(const std::string& comet_id) {
     return ptr;
 }
 
+// read
 // 处理一条 Kafka 推送任务，按模式选择流或一元推送。
 void PushHandler::HandleMessage(const std::string& key,
                                 const std::string& value) {
@@ -291,12 +305,14 @@ void PushHandler::HandleMessage(const std::string& key,
         // 流模式：直接发送到流队列
         SendToStream(comet_id, std::move(req));
     } else {
+        // 默认
         // 传统模式：在 Kafka 分区工作线程内同步完成推送（含重试），
         // 回调返回后 KafkaConsumer 才提交该分区 offset，保证 at-least-once 语义
         ProcessPushRequest(req);
     }
 }
 
+// read ****
 // 单条推送：带指数退避的重试机制
 // 退避策略：100ms → 400ms → 1600ms（base * 4^attempt）
 // 超时控制：每次 RPC 设置 3 秒 deadline，避免长时间阻塞

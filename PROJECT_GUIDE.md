@@ -919,17 +919,51 @@ redis-cli
 - `persist_only` 和 `need_persist` 的区别是什么？
 - `client_msg_id` 和 `msg_id` 分别由谁生成、用在哪里？
 
-### 阶段 3：Logic 的 HTTP 与存储（3～4 天）
+### 阶段 3：Comet 接入层（3～4 天）
 
-**目标**：先走“同步、好调试”的 HTTP 路径，建立对 DAO/Redis/MySQL 的直觉。
+**目标**：理解长连接的生命周期，以及上行消息在 Comet 内部怎么被解析、校验、转发。
+
+**顺序**：
+
+1. `comet/main.cpp` → `comet/app.cpp`（启动顺序、端口、信号处理）
+2. `comet/comet_server.h`（先看数据成员，建立结构感）
+3. `comet/conn_registry.*`
+4. `comet/comet_server.cpp`
+   - `OnValidate` `:136`
+   - `OnOpen` / `OnClose` `:195` / `:205`
+   - `OnMessage` → `HandleTextMessage` `:221` / `:425`
+   - 心跳 `:272` 起
+   - `PushToUsers/PushToRoom/PushToAll` `:581` / `:589` / `:595`
+5. `comet/comet_grpc_service.*`（Job 下行推送入口）
+6. `comet/logic_stream_client.*`（第二遍再抠并发）
+
+**动手实验**：
+
+- 用 `load_test/ws_client_cli` 或浏览器 DevTools 的 Network → WS 观察帧
+- 登录后 `redis-cli HGETALL route:user:{1}`，关闭页面，再看是否被 HDEL
+- 把 `log_level` 调成 `INFO`，观察握手、关闭、心跳日志
+- 手动 `kill -9 comet_server`，观察 Logic 里的路由是否变成脏数据（这就是第 10 章的改进点）
+
+**必须回答**：
+
+- 一条 WebSocket 连接在 Comet 里有哪些状态？存在哪几个容器里？
+- `websocket_utils` 解析了哪些字段？为什么它不解析 `content`？
+- 为什么 `OnValidate` 里要生成 `conn_id`？它和 `user_id` 是什么关系？
+- 心跳为什么分 64 个桶，而不是一个线程遍历所有连接？
+- `OnClose` 时哪些清理是本机的，哪些要通知 Logic？
+- 上行消息走双向流时，ack 是哪个线程发回浏览器的？
+
+### 阶段 4：Logic HTTP 与存储（3～4 天）
+
+**目标**：先走“同步、好调试”的 HTTP 路径，建立对 DAO/Redis/MySQL 的直觉，为后面的 gRPC 主链路打底。
 
 **顺序**：
 
 1. `logic/main.cpp`（看组装关系，不求细节）
 2. `logic/http_server.h` / `http_server.cpp`
-   - 路由表 `:215`
-   - `AuthenticateRequest` `:306`
-   - `CheckSessionAccess` `:355`
+   - 路由表 `:204`
+   - `AuthenticateRequest` `:312`
+   - `CheckSessionAccess` `:362`
 3. `logic/http_handlers_auth.cpp`（登录/注册）
 4. `logic/http_handlers_message.cpp`（发消息/历史/已读/未读/会话列表）
 5. `logic/conversation_store.*`（业务聚合层）
@@ -964,38 +998,7 @@ curl -s -X POST http://127.0.0.1:9101/api/session/history \
 - 未读数是怎么用一个 `MGET` 算出来的？
 - 为什么 `session_id` 要 `min:max` 排序？
 - 如果 Redis 里 `seq_initialized` 不存在，会发生什么？
-
-### 阶段 4：Comet 接入层（3～4 天）
-
-**目标**：理解长连接的生命周期。
-
-**顺序**：
-
-1. `comet/main.cpp` → `comet/app.cpp`（启动顺序）
-2. `comet/comet_server.h`（先看数据成员，建立结构感）
-3. `comet/conn_registry.*`
-4. `comet/comet_server.cpp`
-   - `OnValidate` `:116`
-   - `OnOpen` / `OnClose` `:156` / `:165`
-   - `OnMessage` → `HandleTextMessage` `:370`
-   - 心跳 `:218-304`
-   - `PushToUsers/PushToRoom/PushToAll` `:506-521`
-5. `comet/comet_grpc_service.*`
-6. `comet/logic_stream_client.*`（第二遍再抠并发）
-
-**动手实验**：
-
-- 用 `load_test/ws_client_cli` 或浏览器 DevTools 的 Network → WS 观察帧
-- 登录后 `redis-cli HGETALL route:user:{1}`，关闭页面，再看是否被 HDEL
-- 把 `log_level` 调成 `INFO`，观察握手、关闭、心跳日志
-- 手动 `kill -9 comet_server`，观察 Logic 里的路由是否变成脏数据（这就是第 10 章的改进点）
-
-**必须回答**：
-
-- 一条 WebSocket 连接在 Comet 里有哪些状态？存在哪几个容器里？
-- 为什么 `OnValidate` 里要生成 `conn_id`？它和 `user_id` 是什么关系？
-- 心跳为什么分 64 个桶，而不是一个线程遍历所有连接？
-- `OnClose` 时哪些清理是本机的，哪些要通知 Logic？
+- 登录时 token 写到哪个 key？TTL 多长？
 
 ### 阶段 5：Logic gRPC 与 Kafka 扇出（3～4 天）
 
@@ -1003,12 +1006,13 @@ curl -s -X POST http://127.0.0.1:9101/api/session/history \
 
 **顺序**：
 
-1. `logic/grpc_service.h`
+1. `logic/grpc_service.h`（先列 public RPC，建立“RPC → 私有 handler”的映射）
 2. `logic/grpc_service.cpp`
-   - `VerifyToken` `:45`
-   - `HandleUpstreamMessage` `:224`（**全文精读**）
-   - `HandleRoomJoin/Leave` `:443` / `:465`
-   - `MessageStream` `:491`
+   - `VerifyToken` `:47`
+   - `SendUpstreamMessage` `:78`
+   - `HandleUpstreamMessage` `:241`（**全文精读**）
+   - `HandleUserOffline` `:443`、`HandleRoomJoin` `:462`、`HandleRoomLeave` `:485`
+   - `MessageStream` `:512`
 3. 回到 `logic/redis_store.cpp` 的 `IncrSessionMsgSeq`、`InitAndIncrSessionMsgSeq`
 4. `common/kafka_producer.cpp`
 
@@ -1202,13 +1206,39 @@ curl -s -X POST http://127.0.0.1:9101/api/session/history \
 
 **验收**：能说出 `msg_id`、`client_msg_id`、`session_id`、`msg_seq` 分别由谁生成、存在哪里。
 
-#### 阶段 3：Logic HTTP 与存储（3～4 天）
+#### 阶段 3：Comet 接入层（3～4 天）
+
+1. `comet/main.cpp` → `comet/app.cpp`
+   - 第一遍：WebSocket server、gRPC server、信号处理、`server.Run()` 的启动顺序。
+2. `comet/comet_server.h`
+   - 第一遍：先只看结构体：`ConnContext`、`WsConnectionBase`、`HeartbeatEntry`、`HeartbeatBucket`。
+   - 第一遍：再看 `CometServer` 的成员：`registry_`、`logic_stub_`、`grpc_pool_`、`stream_client_`、心跳桶。
+3. `comet/conn_registry.h` / `conn_registry.cpp`
+   - 第一遍：`UserShard`、`RoomShard`、`hdl_to_uid_` 三张表。
+   - 第二遍：`AddConn`、`RemoveConn`、`ConnsForUsers`、`ConnsInRoom` 的加锁范围。
+4. `comet/comet_server.cpp`，按回调顺序读：
+   - `OnValidate` `:136`：token 提取 → gRPC `VerifyToken` → 写 `ConnContext`。
+   - `OnOpen` `:195`：加入 `ConnRegistry` 和心跳桶。
+   - `OnMessage` `:221` → `HandleTextMessage` `:425`：`ParseUpstreamMessage` → 按 type 校验 → 组装 `UpstreamMessageRequest` → 流/ unary 上行。
+   - `OnClose` `:205`：标记关闭 → 清本机注册表 → 通知 Logic 下线/离开房间。
+   - `PushToUsers` `:581` / `PushToRoom` `:589` / `PushToAll` `:595`：Job 下行入口。
+   - 心跳 `:272` 起：`AddToHeartbeatBucket` → `ScanNextHeartbeatBucket` → `ping/close`。
+5. `comet/comet_grpc_service.h` / `.cpp`
+   - 第一遍：`PushToComet` 和 `PushStream` 两个入口；`ProcessPushRequest` 的 targets/room_id/session 前缀分流。
+6. `comet/logic_stream_client.h` / `.cpp`（第二遍再抠）
+   - 第一遍：`PendingRequest`、`StreamState`；`Send` 如何分配 `request_id`。
+   - 第二遍：writer/reader 线程、`pending_callbacks_` 匹配响应、`Stop` 如何唤醒 `Read`。
+   - 验收问题：为什么 `conn_id` 要在握手时生成？心跳为什么分 64 个桶？ack 为什么由 reader 线程发送？
+
+#### 阶段 4：Logic HTTP 与存储（3～4 天）
+
+> **Logic 分两段读**：阶段 4 先读 HTTP/存储（同步、好调试），阶段 5 再读 gRPC/Kafka 主链路。不要在阶段 4 一开始就啃 `grpc_service.cpp`。
 
 1. `logic/main.cpp`
    - 第一遍：依赖组装顺序：Kafka producer → MySQL pool → DAO → Redis pool → RedisStore → ConversationStore → gRPC/HTTP server。
    - 第二遍：优雅关闭顺序：HTTP stop → gRPC shutdown → MySQL pool stop。
 2. `logic/http_server.h` / `http_server.cpp`
-   - 第一遍：`onRequest` 的路由表；`AuthenticateRequest`；`CheckSessionAccess`；CORS。
+   - 第一遍：`onRequest` `:204` 的路由表；`AuthenticateRequest` `:312`；`CheckSessionAccess` `:362`；CORS。
    - 第二遍：错误响应格式；为什么每个 handler 都要先鉴权/校验会话归属。
 3. `logic/http_handlers_auth.cpp`
    - 第一遍：`handleRegister`、`handleLogin`；密码 MD5；token 写入 Redis 的 TTL。
@@ -1230,49 +1260,50 @@ curl -s -X POST http://127.0.0.1:9101/api/session/history \
    - 第二遍：`IncrSessionMsgSeq` / `InitAndIncrSessionMsgSeq` 的 Lua；`GetUserRoutes` 的缓存和去重。
    - 验收问题：`session_id` 为什么排序？`seq_initialized` 不存在时会发生什么？
 
-#### 阶段 4：Comet 接入层（3～4 天）
-
-1. `comet/main.cpp` → `comet/app.cpp`
-   - 第一遍：WebSocket server、gRPC server、信号处理、`server.Run()` 的启动顺序。
-2. `comet/comet_server.h`
-   - 第一遍：先只看结构体：`ConnContext`、`WsConnectionBase`、`HeartbeatEntry`、`HeartbeatBucket`。
-   - 第一遍：再看 `CometServer` 的成员：`registry_`、`logic_stub_`、`grpc_pool_`、`stream_client_`、心跳桶。
-3. `comet/conn_registry.h` / `conn_registry.cpp`
-   - 第一遍：`UserShard`、`RoomShard`、`hdl_to_uid_` 三张表。
-   - 第二遍：`AddConn`、`RemoveConn`、`ConnsForUsers`、`ConnsInRoom` 的加锁范围。
-4. `comet/comet_server.cpp`，按回调顺序读：
-   - `OnValidate`：token 提取 → gRPC `VerifyToken` → 写 `ConnContext`。
-   - `OnOpen`：加入 `ConnRegistry` 和心跳桶。
-   - `OnMessage` → `HandleTextMessage`：解析 JSON → 上行到 Logic。
-   - `OnClose`：标记关闭 → 清本机注册表 → 通知 Logic 下线/离开房间。
-   - `PushToUsers` / `PushToRoom` / `PushToAll`：Job 下行入口。
-   - 心跳：`AddToHeartbeatBucket` → `ScanNextHeartbeatBucket` → `ping/close`。
-5. `comet/comet_grpc_service.h` / `.cpp`
-   - 第一遍：`PushToComet` 和 `PushStream` 两个入口；如何调用 `CometServer` 的推送方法。
-6. `comet/logic_stream_client.h` / `.cpp`（第二遍再抠）
-   - 第一遍：`PendingRequest`、`StreamState`；`Send` 如何分配 `request_id`。
-   - 第二遍：writer/reader 线程、`pending_callbacks_` 匹配响应、`Stop` 如何唤醒 `Read`。
-   - 验收问题：为什么 `conn_id` 要在握手时生成？心跳为什么分 64 个桶？
-
 #### 阶段 5：Logic gRPC 与 Kafka 扇出（3～4 天）
 
+> **阅读原则**：不要从 `grpc_service.cpp` 第一行顺序读到 last。先建立“public RPC → private handler”的映射，再只精读核心 `HandleUpstreamMessage`；unary 和双向流只是两个入口，核心逻辑是同一份。
+
 1. `logic/grpc_service.h`
-   - 第一遍：七个 RPC 方法；哪些是 unary，哪个是双向流。
-2. `logic/grpc_service.cpp` 的 `VerifyToken`
+   - 第一遍：列出 7 个 public RPC，并标注类型：
+     - unary：`VerifyToken`、`SendUpstreamMessage`、`UserOffline`、`ReportRoomJoin`、`ReportRoomLeave`、`Broadcast`
+     - 双向流：`MessageStream`
+   - 第一遍：建立映射：`SendUpstreamMessage` / `MessageStream` → `HandleUpstreamMessage`；`UserOffline` → `HandleUserOffline`；`Report*` → `HandleRoom*`。
+   - 第二遍：注意 public RPC 大多只做参数转发，真正的业务在 private handler 里。
+2. `logic/grpc_service.cpp` 的 `VerifyToken` `:47`
    - 第一遍：Redis 查 token → 返回 user_id → `AddRoute` 写 `route:user:{uid}`。
-3. `logic/grpc_service.cpp` 的 `HandleUpstreamMessage`（**全文精读**）
-   - 第一遍：单聊/房间/弹幕分支；会话创建；`AllocateMessageSeq`；构造 Kafka 消息。
-   - 第二遍：`targets` 怎么算出来；`persist_only`、`need_persist` 怎么填；Kafka key 怎么选。
-4. `HandleUserOffline`、`HandleRoomJoin`、`HandleRoomLeave`
-   - 第一遍：路由清理、房间在线人数、`room:{rid}:comets` 的增删。
-5. `MessageStream`
-   - 第一遍：双向流的读写循环；`request_id` 如何把响应匹配回请求。
-   - 第二遍：流断开/取消时的清理。
-6. 回看 `logic/redis_store.cpp` 的 `IncrSessionMsgSeq`、`InitAndIncrSessionMsgSeq`
-   - 第一遍：Lua 的输入/输出；初始化标记。
-7. `common/kafka_producer.cpp`
-   - 第一遍：`Send` 的 key/value 如何对应分区和顺序。
-   - 验收问题：目标用户离线时消息去哪了？Kafka key 为什么带 `comet_id`？
+   - 第一遍：gRPC `Status` 永远返回 `OK`，业务错误放在 `ErrorInfo.code`（401/500），这是项目约定。
+   - 第二遍：`token:{token}` 的 TTL 与登录接口的写入是否一致。
+3. `SendUpstreamMessage` `:78`
+   - 第一遍：只有一行委托给 `HandleUpstreamMessage`；理解它是 unary 入口即可。
+4. `HandleUpstreamMessage` `:241`（**全文精读，分六段**）
+   - 第 1 段：`session_id` 怎么生成（单聊 `single:min:max`、聊天室、弹幕各自不同）。
+   - 第 2 段：`msg_seq` 怎么分配（`AllocateMessageSeq` / Redis Lua），失败怎么处理。
+   - 第 3 段：`msg_id` 怎么拼（`session_id + "-" + msg_seq`）。
+   - 第 4 段：`GetUserComets` 查路由，组装 `comet_to_users`。
+   - 第 5 段：解析 `content_json`，注入 `msg_id`、`create_time`、`from_user_id`；解析失败时降级但不阻断。
+   - 第 6 段：Kafka 投递：
+     - 在线：`key = session_id + "|" + comet_id`，`need_persist=true`；
+     - 离线：`persist_only=true`，`key = session_id`；
+     - `deliver_ok=false` 时返回 500。
+   - 第二遍：`targets` 怎么算出来；为什么在线 key 要带 `comet_id`；`KafkaProducer::Send` 只是本地入队，不代表 broker 已确认。
+5. `HandleUserOffline` `:443`、`HandleRoomJoin` `:462`、`HandleRoomLeave` `:485`
+   - 第一遍：`RemoveRoute` 按 `conn_id` 精确删除；房间 `room:{rid}:comets` / `online_count` 的增删。
+   - 第二遍：Lua 原子操作为什么比“先查再改”更安全。
+6. `MessageStream` `:512`
+   - 第一遍：`while (stream->Read(&msg))` → `switch (msg.payload_case())` → `Write(resp)`。
+   - 第一遍：`resp.set_request_id(msg.request_id())` 是响应能找回回调的关键。
+   - 第二遍：每条流是单线程串行处理；`Read` 返回 false 表示客户端断开。
+7. 回看 `logic/redis_store.cpp` 的 `IncrSessionMsgSeq`、`InitAndIncrSessionMsgSeq`
+   - 第一遍：Lua 的输入/输出；`seq_initialized` 标记的作用。
+   - 第二遍：Redis 快路径与 MySQL 兜底的切换条件。
+8. `common/kafka_producer.cpp`
+   - 第一遍：`Send` 的 key/value 如何对应分区和顺序；`acks=1`、`linger.ms=0` 的含义。
+   - 第二遍：没有 delivery report 时，发送失败会在哪一层暴露。
+9. 回到 `comet/logic_stream_client.*`，与 `MessageStream` 成对读
+   - 第一遍：`Send` 分配 `request_id`、`pending_callbacks_` 登记、reader 按 id 找回回调。
+   - 第二遍：流断开、`Write` 失败、回调永远不执行的情况。
+   - 验收问题：目标用户离线时消息去哪了？Kafka key 为什么带 `comet_id`？ack 能代表消息已落库吗？
 
 #### 阶段 6：Job 异步层（2～3 天）
 
@@ -1327,8 +1358,8 @@ curl -s -X POST http://127.0.0.1:9101/api/session/history \
 | 0 | 四个进程、端口、一条消息的路径 | 登录并互发一条消息 | 第 3 章架构图 |
 | 1 | RAII、线程池 Stop、连接池扩容、Kafka 分区串行 | 跑单元测试；停一次 MySQL/Redis 看日志 | 13、14 章速查表 |
 | 2 | `msg_id` / `session_id` / `msg_seq` 的生成者 | 用 Redis/MySQL 对照一条消息 | 4.1～4.4 |
-| 3 | HTTP 发消息的完整调用链 | 用 curl 登录、发消息、查历史 | 5.2、5.3 |
-| 4 | WebSocket 生命周期、路由注册、心跳 | 连/断 WS，观察 `route:user:{uid}` | 5.2、5.9 |
+| 3 | WebSocket 生命周期、路由注册、心跳 | 连/断 WS，观察 `route:user:{uid}` | 5.2、5.9 |
+| 4 | HTTP 发消息的完整调用链 | 用 curl 登录、发消息、查历史 | 5.2、5.3 |
 | 5 | 上行消息如何进 Kafka、key 怎么选 | 用 console-consumer 看 topic | 5.3、6.1 |
 | 6 | at-least-once、重试、持久化事务 | 停 Job/MySQL 观察堆积和 DLQ | 5.4、6.2 |
 | 7 | 房间路由与广播的差异 | 两个浏览器进同一房间 | 5.6～5.8 |
@@ -1350,9 +1381,9 @@ curl -s -X POST http://127.0.0.1:9101/api/session/history \
   ↓
 阶段2 proto + SQL + JSON 解析
   ↓
-阶段3 Logic HTTP + DAO + Redis        ← 同步路径，最好调试
+阶段3 Comet WebSocket + 连接表 + 心跳
   ↓
-阶段4 Comet WebSocket + 连接表 + 心跳
+阶段4 Logic HTTP + DAO + Redis        ← 同步路径，最好调试
   ↓
 阶段5 Logic gRPC + Kafka 上行扇出
   ↓
@@ -1422,10 +1453,10 @@ curl -s -X POST http://127.0.0.1:9101/api/session/history \
 | 周 | 目标 | 产出 |
 |---|---|---|
 | 1 | 跑通 + 读第 1～4 章 + 阶段 0/1 | 画出架构图，能解释每个端口 |
-| 2 | 阶段 2/3：proto、SQL、HTTP、DAO | 用 curl 完成登录/发消息/历史，并用 Redis/MySQL 验证 |
-| 3 | 阶段 3 深入：Redis key、Lua、seq | 写一篇“一条消息的 seq 是如何产生的”笔记 |
-| 4 | 阶段 4：Comet、WS、心跳、连接表 | 用 DevTools 观察 WS 帧；解释断线清理 |
-| 5 | 阶段 5：gRPC、Kafka 扇出 | 用 Kafka 命令行看到 key/payload；画出上行时序图 |
+| 2 | 阶段 2/3：proto、SQL、Comet WS、连接表、心跳 | 用 DevTools 观察 WS 帧；解释断线清理 |
+| 3 | 阶段 3 深入：Comet 上行、流客户端、ack；开始阶段 4 | 画出 WS → 流 → Logic 的上行时序图 |
+| 4 | 阶段 4：Logic HTTP、DAO、Redis | 用 curl 完成登录/发消息/历史，并用 Redis/MySQL 验证 |
+| 5 | 阶段 4 深入 + 阶段 5：Redis key/Lua/seq、gRPC、Kafka 扇出 | 写“一条消息的 seq 如何产生的”笔记；用 Kafka 命令行看 key/payload |
 | 6 | 阶段 6：Job、重试、落盘 | 停依赖做故障注入，记录重试与 DLQ 日志 |
 | 7 | 阶段 7/8：房间/弹幕/广播 + 压测 | 跑一轮压测，记录 P95/P99 |
 | 8 | Level 1 二次开发 + 复盘 | 提交一个小 PR（或 patch），写清改前/改后 |
@@ -2211,7 +2242,7 @@ Job、HTTP、管理员、日志：
 
 > 本章覆盖 Comet / Logic / Job 三个业务进程里“项目自己定义”的结构体和关键类成员。protobuf 生成的消息字段放在 14.7。
 >
-> 读代码时建议配合 **7.9 阶段 4～6**：先看 `ConnContext` 和 `ConnRegistry`，再看 `StreamState`，最后看 Logic 的数据模型。
+> 读代码时建议配合 **7.9 阶段 3～6**：先看 `ConnContext` 和 `ConnRegistry`，再看 `StreamState`，最后看 Logic 的数据模型。
 
 ### 14.1 Comet：连接与心跳
 

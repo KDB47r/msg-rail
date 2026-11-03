@@ -255,3 +255,5 @@ Config LoadConfig(const std::string& path) {
 }
 
 }  // namespace sparkpush
+
+// LoadConfig 实现 辅助函数实现

@@ -76,6 +76,7 @@ HttpRequest::Method MapMethod(uint8_t m) {
 
 }  // namespace
 
+// read
 // 按 header 名大小写不敏感地查找并返回第一个值。
 std::string HttpRequest::getHeader(const std::string& name) const {
     const std::string lname = ToLower(name);
@@ -246,6 +247,7 @@ class Session : public std::enable_shared_from_this<Session> {
                 }
                 if (ctx_.complete) {
                     HttpResponse resp;
+                    //**** 
                     if (callback_) callback_(ctx_.req, &resp);
                     bool ka = ctx_.keep_alive;
                     std::string out = BuildResponse(resp, ka);

@@ -92,6 +92,7 @@ PersistHandler::PersistHandler(const Config& cfg) : cfg_(cfg) {}
 
 PersistHandler::~PersistHandler() { Stop(); }
 
+// reaf
 // 初始化 MySQL 连接池和持久化 Kafka 消费者。
 bool PersistHandler::Init() {
     // 初始化MySQL连接池
@@ -158,6 +159,7 @@ void PersistHandler::Stop() {
     LogInfo("[PersistHandler] Stopped");
 }
 
+// read
 // 在 Kafka 分区工作线程内同步处理：回调返回即代表消息已处理完成，
 // KafkaConsumer 随后才提交该分区 offset，保证 at-least-once 语义
 // 处理一条消息，仅对需要持久化的消息落库。

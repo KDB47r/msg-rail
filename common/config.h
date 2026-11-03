@@ -89,3 +89,4 @@ Config LoadConfig(const std::string& path);
 
 }  // namespace sparkpush
 
+// 在 sparkpush 命名空间下定义 config 结构体 声明 LoadConfig 函数

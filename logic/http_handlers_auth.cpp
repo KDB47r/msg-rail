@@ -11,6 +11,7 @@ using HttpRequest = ::sparkpush::net::HttpRequest;
 using HttpResponse = ::sparkpush::net::HttpResponse;
 using namespace detail;
 
+// read
 // 处理登录：校验账号密码并签发 24 小时 token。
 void HttpApiServer::handleLogin(const HttpRequest& req, HttpResponse* resp) {
     // 商用接口：只允许 POST，参数通过 JSON body 传递
@@ -44,6 +45,9 @@ void HttpApiServer::handleLogin(const HttpRequest& req, HttpResponse* resp) {
             return;
         }
 
+        // 把业务结果按统一 JSON 格式填进 HTTP 响应对象 
+        // 它不会立刻发网络，只是填好 resp 
+        // 等 handler 返回后由 HTTP 服务器统一发送
         nlohmann::json data{{"user_id", admin_user_id_}, {"token", token}};
         WriteJson(resp, 0, "ok", data.dump());
         return;
@@ -54,6 +58,10 @@ void HttpApiServer::handleLogin(const HttpRequest& req, HttpResponse* resp) {
         return;
     }
 
+    // user_dao_ 不是 HTTP 服务器自己 new 出来的
+    // 而是 main.cpp 创建好之后，通过构造函数“注入”进来的
+
+    // 这是一个防御性判空
     if (!user_dao_) {
         WriteError(resp, 500, "user dao not initialized");
         return;
@@ -86,6 +94,7 @@ void HttpApiServer::handleLogin(const HttpRequest& req, HttpResponse* resp) {
     WriteJson(resp, 0, "ok", data.dump());
 }
 
+// read
 // 处理注册：创建用户并直接签发 token。
 void HttpApiServer::handleRegister(const HttpRequest& req, HttpResponse* resp) {
     // 商用接口：只允许 POST，参数通过 JSON body 传递

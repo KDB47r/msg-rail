@@ -90,6 +90,7 @@ void LogicStreamClient::Stop() {
     streams_.clear();
 }
 
+// raed
 // 从发送队列取请求写入指定流。
 void LogicStreamClient::WriterLoop(int stream_idx) {
     auto& state = streams_[stream_idx];
@@ -115,6 +116,7 @@ void LogicStreamClient::WriterLoop(int stream_idx) {
             state->pending_callbacks_[req.msg.request_id()] = std::move(req.callback);
         }
 
+        // 实际发送消息处
         if (!state->stream->Write(req.msg)) {
             LogError("Stream " + std::to_string(stream_idx) + " write failed");
             break;
@@ -122,12 +124,14 @@ void LogicStreamClient::WriterLoop(int stream_idx) {
     }
 }
 
+// read
 // 读取 Logic 响应并按 request_id 回调。
 void LogicStreamClient::ReaderLoop(int stream_idx) {
     auto& state = streams_[stream_idx];
     if (!state || !state->stream) return;
     StreamResponse resp;
 
+    // 读消息处
     while (stream_running_ && state->stream->Read(&resp)) {
         
         std::function<void(const StreamResponse&)> callback;
@@ -169,3 +173,5 @@ void LogicStreamClient::Send(
 }
 
 }  // namespace sparkpush
+
+//

@@ -89,10 +89,8 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
     // 恢复历史最大值，避免与已持久化消息冲突。
     int64_t msg_seq = 0;
     std::string seq_err;
-    if (!store_ ||
-        !store_->AllocateMessageSeq(session_id, &msg_seq, &seq_err)) {
-        LogError("AllocateMessageSeq failed for session " + session_id +
-                 ": " + seq_err);
+    if (!store_ || !store_->AllocateMessageSeq(session_id, &msg_seq, &seq_err)) {
+        LogError("AllocateMessageSeq failed for session " + session_id + ": " + seq_err);
         WriteError(resp, 500, "allocate msg_seq failed");
         return;
     }
@@ -148,7 +146,9 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
                          comet_id);
                 deliver_ok = false;
             } else {
+                // protobuf 对象序列化成字节串，这个字节串就是 Kafka 的 valu
                 const std::string kafka_key = session_id + "|" + comet_id;
+                // *** 
                 if (!kafka_producer_->Send(kafka_key, payload)) {
                     LogError("Kafka send message failed for comet " +
                              comet_id);
@@ -197,13 +197,14 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
     WriteJson(resp, 0, "ok", data.dump());
 }
 
+// read
 // 查询会话历史消息。
 void HttpApiServer::handleHistory(const HttpRequest& req, HttpResponse* resp) {
     if (!RequirePost(req, resp)) return;
 
     // 统一鉴权：确保请求来自已登录用户
     int64_t auth_user_id = AuthenticateRequest(req, resp);
-    if (auth_user_id <= 0) return;
+    // if (auth_user_id <= 0) return;
 
     nlohmann::json j;
     if (!ParseJsonBody(req.body(), &j)) {
@@ -275,6 +276,7 @@ void HttpApiServer::handleHistory(const HttpRequest& req, HttpResponse* resp) {
     WriteJson(resp, 0, "ok", data.dump());
 }
 
+// read
 // 把会话标记为已读到指定序号。
 void HttpApiServer::handleMarkRead(const HttpRequest& req, HttpResponse* resp) {
     if (!RequirePost(req, resp)) return;
@@ -322,6 +324,7 @@ void HttpApiServer::handleMarkRead(const HttpRequest& req, HttpResponse* resp) {
     WriteJson(resp, 0, "ok");
 }
 
+// raed
 // 查询会话未读消息数。
 void HttpApiServer::handleUnread(const HttpRequest& req, HttpResponse* resp) {
     if (!RequirePost(req, resp)) return;
@@ -369,6 +372,7 @@ void HttpApiServer::handleUnread(const HttpRequest& req, HttpResponse* resp) {
     WriteJson(resp, 0, "ok", data.str());
 }
 
+// read
 // 列出用户的单聊会话。
 void HttpApiServer::handleSingleSessionList(const HttpRequest& req,
                                             HttpResponse* resp) {

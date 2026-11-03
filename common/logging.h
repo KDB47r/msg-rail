@@ -111,3 +111,5 @@ class LogStream {
 #define LOG_WARN SPARKPUSH_LOG_IF(::sparkpush::kLogWarn)
 #define LOG_ERROR SPARKPUSH_LOG_IF(::sparkpush::kLogError)
 #define LOG_FATAL SPARKPUSH_LOG_IF(::sparkpush::kLogFatal)
+
+//
