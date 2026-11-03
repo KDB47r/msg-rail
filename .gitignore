@@ -38,4 +38,4 @@ kafka-data/
 .DS_Store
 
 # ---- Other ----
-docs/
+old_docs/
