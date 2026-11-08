@@ -207,6 +207,13 @@ ctest --output-on-failure
 - [`docs/PROJECT_GUIDE.md`](docs/PROJECT_GUIDE.md)：完整项目解析与二次开发路线
 - [`docs/message.md`](docs/message.md)：消息字段全链路说明
 - [`docs/requests.md`](docs/requests.md)：gRPC / HTTP / Kafka 请求清单与调用关系
+- [`docs/protocol_ws_http.md`](docs/protocol_ws_http.md)：WebSocket / HTTP 实际传输内容与头字段详解
+- [`docs/INTERVIEW_QUESTIONS.md`](docs/INTERVIEW_QUESTIONS.md)：项目面试问题清单与高频追问点
+- [`docs/review.md`](docs/review.md)：模拟面试复盘、回答纠错与下一轮行动项
+- [`docs/lock.md`](docs/lock.md)：全项目锁、条件变量与原子变量清单
+- [`docs/store.md`](docs/store.md)：Redis 与 MySQL 实际存储清单
+- [`docs/media_upload_design.md`](docs/media_upload_design.md)：图片/视频/语音上传与模糊预览设计草案
+- [`docs/media_api_spec.md`](docs/media_api_spec.md)：图片媒体消息第一阶段的接口契约草案
 
 ---
 
