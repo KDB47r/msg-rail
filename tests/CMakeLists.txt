@@ -16,6 +16,7 @@ add_executable(unit_tests
   test_thread_pool.cpp
   test_conn_registry.cpp
   test_timer_wheel.cpp
+  test_media.cpp
   ${CMAKE_SOURCE_DIR}/comet/websocket_utils.cpp
   ${CMAKE_SOURCE_DIR}/comet/conn_registry.cpp
 )
@@ -25,11 +26,14 @@ target_include_directories(unit_tests
     ${CMAKE_SOURCE_DIR}/third_party
     ${CMAKE_SOURCE_DIR}/common
     ${CMAKE_SOURCE_DIR}/comet
+    ${CMAKE_SOURCE_DIR}/media
 )
 
 target_link_libraries(unit_tests
   PRIVATE
     spark_push_core
+    spark_push_media
+    spark_push_s3
     nlohmann_json::nlohmann_json
     websocketpp
 )
@@ -38,3 +42,19 @@ target_link_libraries(unit_tests
 target_compile_options(unit_tests PRIVATE -Wno-unused-parameter)
 
 add_test(NAME unit_tests COMMAND unit_tests)
+
+# 图片处理管线基准测试：手动运行，不注册为 ctest（耗时会随图片尺寸变化）。
+add_executable(image_pipeline_bench
+  benchmark_image_pipeline.cpp
+)
+target_include_directories(image_pipeline_bench
+  PRIVATE
+    ${CMAKE_SOURCE_DIR}/media
+)
+target_link_libraries(image_pipeline_bench
+  PRIVATE
+    spark_push_media
+    PkgConfig::SPARKPUSH_JPEG
+    PkgConfig::SPARKPUSH_PNG
+    PkgConfig::SPARKPUSH_WEBP
+)

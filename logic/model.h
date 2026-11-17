@@ -11,6 +11,7 @@ struct User {
     int64_t id{0};
     std::string account;
     std::string name;
+    std::string avatar_media_id;
     std::string password_hash;
 };
 

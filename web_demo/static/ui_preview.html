@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MsgRail · UI Preview</title>
+  <meta name="description" content="MsgRail 分布式消息推送系统 Web Demo UI 样张" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='7' fill='%232563eb'/%3E%3Cpath d='M5 17V8l7 4.5L19 8v9' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="ui/tokens.css" />
+  <link rel="stylesheet" href="ui/base.css" />
+  <link rel="stylesheet" href="ui/chat.css" />
+  <link rel="stylesheet" href="ui/preview.css" />
+  <script src="ui/theme.js"></script>
+</head>
+<body class="preview-body">
+
+  <svg width="0" height="0" style="position:absolute;overflow:hidden" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="i-logo" viewBox="0 0 24 24">
+        <path d="M4 18V7.2L12 12l8-4.8V18" />
+        <circle cx="4" cy="7.2" r="1.5" fill="currentColor" stroke="none" />
+        <circle cx="20" cy="7.2" r="1.5" fill="currentColor" stroke="none" />
+        <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      </symbol>
+      <symbol id="i-arrow-right" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="m13 6 6 6-6 6" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="m5 12.5 4.5 4.5L19 7" />
+      </symbol>
+      <symbol id="i-close" viewBox="0 0 24 24">
+        <path d="m6 6 12 12M18 6 6 18" />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M12 5v14M5 12h14" />
+      </symbol>
+      <symbol id="i-send" viewBox="0 0 24 24">
+        <path d="M4.5 11.5 20 4l-6.5 16-2.4-6.1L4.5 11.5Z" />
+        <path d="M11.1 13.9 20 4" />
+      </symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="4" />
+        <path d="M12 2.5v2M12 19.5v2M4.3 4.3l1.4 1.4M18.3 18.3l1.4 1.4M2.5 12h2M19.5 12h2M4.3 19.7l1.4-1.4M18.3 5.7l1.4-1.4" />
+      </symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24">
+        <path d="M20 14.2A8.5 8.5 0 0 1 9.8 4a8.5 8.5 0 1 0 10.2 10.2Z" />
+      </symbol>
+      <symbol id="i-image" viewBox="0 0 24 24">
+        <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
+        <circle cx="9" cy="10" r="1.5" />
+        <path d="m4.5 17 4.7-4.3a2 2 0 0 1 2.7 0l2.7 2.4 1.6-1.4a2 2 0 0 1 2.7.1l1.6 1.6" />
+      </symbol>
+      <symbol id="i-video" viewBox="0 0 24 24">
+        <rect x="3" y="5" width="13" height="14" rx="2.5" />
+        <path d="m16 10.5 5-2.7v8.4l-5-2.7" />
+      </symbol>
+      <symbol id="i-file" viewBox="0 0 24 24">
+        <path d="M6 3.5h7l5 5V20a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 5 20V5a1.5 1.5 0 0 1 1-1.5Z" />
+        <path d="M13 3.8V9h5" />
+        <path d="M9 13h6M9 16.5h4" />
+      </symbol>
+      <symbol id="i-search" viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="6.5" />
+        <path d="m16 16 4 4" />
+      </symbol>
+      <symbol id="i-users" viewBox="0 0 24 24">
+        <circle cx="9" cy="8" r="3" />
+        <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
+        <circle cx="17" cy="9" r="2.4" />
+        <path d="M16 14.5a4.5 4.5 0 0 1 4.5 4.5" />
+      </symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24">
+        <path d="M12 3.2 19 6v5.2c0 4.3-2.8 7.2-7 9.3-4.2-2.1-7-5-7-9.3V6l7-2.8Z" />
+        <path d="m9 12 2 2 4-4" />
+      </symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
+        <path d="m7.5 9 3 3-3 3" />
+        <path d="M12.5 15h4" />
+      </symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24">
+        <rect x="9" y="9" width="10" height="10" rx="2" />
+        <path d="M5 15V6a1 1 0 0 1 1-1h9" />
+      </symbol>
+      <symbol id="i-play" viewBox="0 0 24 24">
+        <path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="none" />
+      </symbol>
+      <symbol id="i-link" viewBox="0 0 24 24">
+        <path d="M10.5 13.5a3.5 3.5 0 0 0 5 0l2.5-2.5a3.5 3.5 0 0 0-5-5l-1.5 1.5" />
+        <path d="M13.5 10.5a3.5 3.5 0 0 0-5 0L6 13a3.5 3.5 0 0 0 5 5l1.5-1.5" />
+      </symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24">
+        <path d="M20 11a8 8 0 1 0-2.3 6.7" />
+        <path d="M20 4v7h-7" />
+      </symbol>
+      <symbol id="i-history" viewBox="0 0 24 24">
+        <path d="M4 12a8 8 0 1 0 2.3-5.7" />
+        <path d="M4 4v6h6" />
+        <path d="M12 8v4.5l3 1.8" />
+      </symbol>
+      <symbol id="i-spark" viewBox="0 0 24 24">
+        <path d="M12 3.5 13.8 9l5.7 1.8-5.7 1.8L12 18.5l-1.8-5.9L4.5 10.8 10.2 9 12 3.5Z" />
+      </symbol>
+      <symbol id="i-layers" viewBox="0 0 24 24">
+        <path d="m12 3.5 8.5 4.5L12 12.5 3.5 8 12 3.5Z" />
+        <path d="m4 12 8 4.3 8-4.3" />
+        <path d="m4 16 8 4.3 8-4.3" />
+      </symbol>
+    </defs>
+  </svg>
+
+  <header class="preview-header">
+    <a class="brand" href="#top" aria-label="MsgRail 返回顶部">
+      <span class="brand-mark">
+        <svg class="mr-icon" aria-hidden="true"><use href="#i-logo"></use></svg>
+      </span>
+      <span class="brand-text">
+        <span class="brand-name">MsgRail</span>
+        <span class="brand-sub">分布式消息推送系统</span>
+      </span>
+    </a>
+
+    <nav class="preview-nav" aria-label="样张导航">
+      <a href="#foundations">设计基础</a>
+      <a href="#components">组件</a>
+      <a href="#chat">聊天界面</a>
+      <a href="#surfaces">其他界面</a>
+      <a href="#pages">页面清单</a>
+    </nav>
+
+    <div class="preview-actions">
+      <span class="preview-tag">UI Preview</span>
+      <a class="mr-btn mr-btn-primary mr-btn-sm preview-cta" href="#chat">
+        查看聊天样例
+        <svg class="mr-icon mr-icon-sm" aria-hidden="true"><use href="#i-arrow-right"></use></svg>
+      </a>
+      <button class="theme-toggle" type="button" data-theme-toggle aria-pressed="false" aria-label="切换到深色模式" title="切换到深色模式">
+        <svg class="mr-icon icon-sun" aria-hidden="true"><use href="#i-sun"></use></svg>
+        <svg class="mr-icon icon-moon" aria-hidden="true"><use href="#i-moon"></use></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="preview-main" id="top">
+
+    <!-- Hero ---------------------------------------------------------------->
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <span class="mr-eyebrow">MsgRail Design System · v0.1</span>
+        <h1 id="hero-title">让每一条消息<br /><span class="grad">沿着轨道抵达。</span></h1>
+        <p>
+          MsgRail 是 SparkPush 的 Web 视觉语言。以轨道、信号和光晕为核心意象，
+          在克制的浅色底上建立清晰的层级，并提供完整的深色模式。
+        </p>
+
+        <div class="hero-actions">
+          <a class="mr-btn mr-btn-primary mr-btn-lg" href="#chat">
+            查看聊天样例
+            <svg class="mr-icon mr-icon-sm" aria-hidden="true"><use href="#i-arrow-right"></use></svg>
+          </a>
+          <a class="mr-btn mr-btn-secondary mr-btn-lg" href="#foundations">浏览设计基础</a>
+        </div>
+
+        <div class="hero-meta">
+          <span class="mr-pill mr-pill-accent">
+            <svg class="mr-icon mr-icon-sm" aria-hidden="true"><use href="#i-check"></use></svg>
+            纯原生零构建
+          </span>
+          <span class="mr-pill">浅色 / 深色</span>
+          <span class="mr-pill">系统字体</span>
+          <span class="mr-pill">WCAG AA</span>
+        </div>
+      </div>
+
+      <div class="hero-visual" aria-hidden="true">
+        <div class="orbit-stage">
+          <span class="orbit-ring ring-c"></span>
+          <span class="orbit-ring ring-a"></span>
+          <span class="orbit-ring ring-b"></span>
+
+          <div class="orbit-core">
+            <svg class="mr-icon" aria-hidden="true"><use href="#i-logo"></use></svg>
+          </div>
+
+          <span class="orbit-planet"></span>
+          <span class="orbit-planet planet-2"></span>
+          <span class="orbit-planet planet-3"></span>
+
+          <div class="orbit-stat">
+            <span class="mr-dot mr-dot-online"></span>
+            <span>WS 通道正常</span>
+            <strong>P95 12ms</strong>
+          </div>
+
+          <div class="orbit-card">
+            <div class="orbit-card-head">
+              <div class="mr-avatar">R</div>
+              <div>
+                <div class="orbit-card-name">Rail Bot</div>
+                <div class="demo-avatar-sub">推送节点 · 在线</div>
+              </div>
+              <span class="orbit-card-time">now</span>
+            </div>
+            <div class="orbit-card-msg">你的消息已沿轨道送达。</div>
+            <div class="orbit-card-status">
+              <svg class="mr-icon mr-icon-sm" aria-hidden="true"><use href="#i-check"></use></svg>
+              <span>2 个副本 · P95 12 ms</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Foundations --------------------------------------------------------->
+    <section class="section" id="foundations">
+      <div class="section-head">
+        <span class="mr-eyebrow">01 / Foundations</span>
+        <h2>设计基础</h2>
+        <p>一套小而完整的令牌体系：色彩、字体、圆角、阴影与动效都由 CSS 变量驱动，切换主题时无需改动任何布局。</p>
+      </div>
+
+      <div class="token-grid">
+        <div class="mr-card span-7">
+          <div class="mr-card-title">色彩</div>
+          <div class="mr-card-hint">品牌渐变是唯一的视觉主角，其余颜色保持克制。</div>
+          <div class="swatch-grid">
+            <div class="swatch">
+              <div class="swatch-chip" style="--swatch: var(--mr-accent)"></div>
+              <div class="swatch-label"><span>accent</span><span>brand</span></div>
+            </div>
+            <div class="swatch">
+              <div class="swatch-chip" style="--swatch: var(--mr-accent-2)"></div>
+              <div class="swatch-label"><span>accent-2</span><span>orbit</span></div>
+            </div>
+            <div class="swatch">
+              <div class="swatch-chip" style="--swatch: var(--mr-text)"></div>
+              <div class="swatch-label"><span>text</span><span>ink</span></div>
+            </div>
+            <div class="swatch">
+              <div class="swatch-chip" style="--swatch: var(--mr-bg)"></div>
+              <div class="swatch-label"><span>bg</span><span>canvas</span></div>
+            </div>
+            <div class="swatch">
+              <div class="swatch-chip" style="--swatch: var(--mr-success)"></div>
+              <div class="swatch-label"><span>success</span><span>online</span></div>
+            </div>
+            <div class="swatch">
+              <div class="swatch-chip" style="--swatch: var(--mr-warning)"></div>
+              <div class="swatch-label"><span>warning</span><span>pending</span></div>
+            </div>
+            <div class="swatch">
+              <div class="swatch-chip" style="--swatch: var(--mr-danger)"></div>
+              <div class="swatch-label"><span>danger</span><span>alert</span></div>
+            </div>
+            <div class="swatch">
+              <div class="swatch-chip" style="--swatch: var(--mr-surface)"></div>
+              <div class="swatch-label"><span>surface</span><span>card</span></div>
+            </div>
+          </div>
+          <div class="gradient-strip">
+            <span>linear-gradient(135deg, accent, accent-2)</span>
+            <span>brand</span>
+          </div>
+        </div>
+
+        <div class="mr-card span-5">
+          <div class="mr-card-title">字体层级</div>
+          <div class="mr-card-hint">系统字体栈，中文优先，不加载外部字体。</div>
+          <div class="type-scale">
+            <div class="type-row">
+              <span class="sample" style="font-size:30px;font-weight:650;letter-spacing:-0.02em;">沿着轨道抵达。</span>
+              <span class="meta">30 / 650</span>
+            </div>
+            <div class="type-row">
+              <span class="sample" style="font-size:20px;font-weight:600;">会话标题</span>
+              <span class="meta">20 / 600</span>
+            </div>
+            <div class="type-row">
+              <span class="sample" style="font-size:14px;">正文内容保持 1.55 行高。</span>
+              <span class="meta">14 / 400</span>
+            </div>
+            <div class="type-row">
+              <span class="sample" style="font-size:12px;font-weight:500;color:var(--mr-text-2);">辅助说明与元信息</span>
+              <span class="meta">12 / 500</span>
+            </div>
+            <div class="type-row">
+              <span class="sample" style="font-family:var(--mr-font-mono);font-size:11px;">mono · 12ms · 1,284</span>
+              <span class="meta">11 / mono</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mr-card span-4">
+          <div class="mr-card-title">圆角</div>
+          <div class="mr-card-hint">从控件到气泡的柔和梯度。</div>
+          <div class="radius-row">
+            <div class="radius-chip r-sm">6</div>
+            <div class="radius-chip r-md">10</div>
+            <div class="radius-chip r-lg">14</div>
+            <div class="radius-chip r-pill">999</div>
+          </div>
+        </div>
+
+        <div class="mr-card span-4">
+          <div class="mr-card-title">阴影</div>
+          <div class="mr-card-hint">用低饱和阴影表达浮层与层级。</div>
+          <div class="shadow-row">
+            <div class="shadow-chip s-sm">sm</div>
+            <div class="shadow-chip s-md">md</div>
+            <div class="shadow-chip s-lg">lg</div>
+          </div>
+        </div>
+
+        <div class="mr-card span-4">
+          <div class="mr-card-title">动效</div>
+          <div class="mr-card-hint">连续动画只出现在加载态与弹幕。</div>
+          <div class="demo-row">
+            <span class="mr-orbit-loader" aria-hidden="true"><span></span><span></span><span></span></span>
+            <div>
+              <div class="demo-avatar-name">Orbit loader</div>
+              <div class="demo-avatar-sub">2.6s linear</div>
+            </div>
+          </div>
+          <div class="mr-divider"></div>
+          <div class="demo-row">
+            <span class="mr-pill">140ms</span>
+            <span class="mr-pill">200ms</span>
+            <span class="mr-pill">ease-out</span>
+          </div>
+        </div>
+
+        <div class="mr-card span-12">
+          <div class="mr-card-title">图标</div>
+          <div class="mr-card-hint">全部为内联 SVG，1.8 描边，跟随 currentColor，不依赖图标库。</div>
+          <div class="icon-grid">
+            <div class="icon-cell"><svg class="mr-icon" aria-hidden="true"><use href="#i-image"></use></svg><span>image</span></div>
+            <div class="icon-cell"><svg class="mr-icon" aria-hidden="true"><use href="#i-video"></use></svg><span>video</span></div>
+            <div class="icon-cell"><svg class="mr-icon" aria-hidden="true"><use href="#i-file"></use></svg><span>file</span></div>
+            <div class="icon-cell"><svg class="mr-icon" aria-hidden="true"><use href="#i-send"></use></svg><span>send</span></div>
+            <div class="icon-cell"><svg class="mr-icon" aria-hidden="true"><use href="#i-plus"></use></svg><span>plus</span></div>
+            <div class="icon-cell"><svg class="mr-icon" aria-hidden="true"><use href="#i-sun"></use></svg><span>sun</span></div>
+            <div class="icon-cell"><svg class="mr-icon" aria-hidden="true"><use href="#i-moon"></use></svg><span>moon</span></div>
+            <div class="icon-cell"><svg class="mr-icon" aria-hidden="true"><use href="#i-close"></use></svg><span>close</span></div>
+            <div class="icon-cell"><svg class="mr-icon" aria-hidden="true"><use href="#i-search"></use></svg><span>search</span></div>
+            <div class="icon-cell"><svg class="mr-icon" aria-hidden="true"><use href="#i-users"></use></svg><span>users</span></div>
+            <div class="icon-cell"><svg class="mr-icon" aria-hidden="true"><use href="#i-shield"></use></svg><span>shield</span></div>
+            <div class="icon-cell"><svg class="mr-icon" aria-hidden="true"><use href="#i-terminal"></use></svg><span>terminal</span></div>
+            <div class="icon-cell"><svg class="mr-icon" aria-hidden="true"><use href="#i-copy"></use></svg><span>copy</span></div>
+            <div class="icon-cell"><svg class="mr-icon" aria-hidden="true"><use href="#i-check"></use></svg><span>check</span></div>
+            <div class="icon-cell"><svg class="mr-icon" aria-hidden="true"><use href="#i-play"></use></svg><span>play</span></div>
+            <div class="icon-cell"><svg class="mr-icon" aria-hidden="true"><use href="#i-link"></use></svg><span>link</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Components ---------------------------------------------------------->
+    <section class="section" id="components">
+      <div class="section-head">
+        <span class="mr-eyebrow">02 / Components</span>
+        <h2>组件</h2>
+        <p>按钮、输入、头像、反馈与附件菜单都复用现有 DOM 结构，只替换视觉层；交互逻辑保持原样。</p>
+      </div>
+
+      <div class="component-grid">
+        <div class="mr-card">
+          <div class="mr-card-title">按钮</div>
+          <div class="mr-card-hint">主操作使用品牌渐变，次操作保持中性。</div>
+          <div class="demo-stack">
+            <div>
+              <div class="demo-label">PRIMARY / SECONDARY / GHOST</div>
+              <div class="demo-row">
+                <button class="mr-btn mr-btn-primary" type="button">
+                  发送消息
+                  <svg class="mr-icon mr-icon-sm" aria-hidden="true"><use href="#i-send"></use></svg>
+                </button>
+                <button class="mr-btn mr-btn-secondary" type="button">预览</button>
+                <button class="mr-btn mr-btn-ghost" type="button">取消</button>
+                <button class="mr-btn mr-btn-danger" type="button">退出登录</button>
+              </div>
+            </div>
+            <div>
+              <div class="demo-label">SIZE / ICON / DISABLED</div>
+              <div class="demo-row">
+                <button class="mr-btn mr-btn-primary mr-btn-sm" type="button">小号按钮</button>
+                <button class="mr-btn mr-btn-secondary mr-btn-lg" type="button">大号按钮</button>
+                <button class="mr-btn mr-btn-secondary mr-btn-icon" type="button" aria-label="更多操作" title="更多操作">
+                  <svg class="mr-icon" aria-hidden="true"><use href="#i-plus"></use></svg>
+                </button>
+                <button class="mr-btn mr-btn-primary" type="button" disabled>禁用</button>
+              </div>
+            </div>
+          </div>
+          <p class="demo-caption">主按钮只用于当前视图的唯一主动作，危险操作保持低饱和。</p>
+        </div>
+
+        <div class="mr-card">
+          <div class="mr-card-title">表单与切换</div>
+          <div class="mr-card-hint">输入控件使用统一的焦点环与 10px 圆角。</div>
+          <div class="demo-stack">
+            <div class="demo-field-grid">
+              <div class="mr-field">
+                <label class="mr-label" for="demo-user">User ID</label>
+                <input class="mr-input" id="demo-user" value="1002" />
+              </div>
+              <div class="mr-field">
+                <label class="mr-label" for="demo-room">房间</label>
+                <select class="mr-select" id="demo-room">
+                  <option>global</option>
+                  <option>tech</option>
+                  <option>random</option>
+                </select>
+              </div>
+            </div>
+            <div class="mr-field">
+              <label class="mr-label" for="demo-note">消息</label>
+              <textarea class="mr-textarea" id="demo-note" placeholder="输入一条消息..."></textarea>
+            </div>
+            <div class="mr-segment" data-segment>
+              <button class="active" type="button">单聊</button>
+              <button type="button">群聊</button>
+              <button type="button">弹幕</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="mr-card">
+          <div class="mr-card-title">头像与状态</div>
+          <div class="mr-card-hint">头像保持低饱和；在线状态使用单一绿色信号。</div>
+          <div class="demo-avatar-line">
+            <div class="mr-avatar mr-avatar-ring">林</div>
+            <div class="mr-avatar mr-avatar-lg">AL</div>
+            <div class="mr-avatar mr-avatar-sm">B</div>
+            <div class="demo-avatar-copy">
+              <span class="demo-avatar-name">林知远</span>
+              <span class="demo-avatar-sub">UID 1002 · 活跃会话</span>
+            </div>
+          </div>
+          <div class="mr-divider"></div>
+          <div class="demo-row">
+            <span class="mr-pill mr-pill-success"><span class="mr-dot mr-dot-online"></span>在线</span>
+            <span class="mr-pill mr-pill-accent">已读 3</span>
+            <span class="mr-pill">离线</span>
+            <span class="mr-badge">12</span>
+          </div>
+          <p class="demo-caption">轨道环只用于“当前用户 / 活跃会话”，不铺满列表。</p>
+        </div>
+
+        <div class="mr-card">
+          <div class="mr-card-title">反馈</div>
+          <div class="mr-card-hint">Toast、弹窗与加载态共用玻璃层与阴影令牌。</div>
+          <div class="demo-row">
+            <button class="mr-btn mr-btn-secondary" type="button" data-demo-toast="消息已发送">触发 Toast</button>
+            <button class="mr-btn mr-btn-secondary" type="button" id="open-modal">打开弹窗</button>
+            <button class="mr-btn mr-btn-ghost" type="button" data-demo-toast="已标记为已读">标记已读</button>
+          </div>
+          <div class="mr-divider"></div>
+          <div class="demo-row">
+            <span class="mr-orbit-loader" aria-hidden="true"><span></span><span></span><span></span></span>
+            <span class="mr-muted mr-small">同步历史消息...</span>
+          </div>
+        </div>
+
+        <div class="mr-card">
+          <div class="mr-card-title">附件菜单</div>
+          <div class="mr-card-hint">复用现有 attach-panel 结构，图标换成内联 SVG。</div>
+          <div class="demo-attach">
+            <button class="attach-item" type="button" data-demo-toast="已选择图片">
+              <span class="attach-icon"><svg class="mr-icon" aria-hidden="true"><use href="#i-image"></use></svg></span>
+              <span class="attach-label">图片</span>
+            </button>
+            <button class="attach-item" type="button" data-demo-toast="已选择视频">
+              <span class="attach-icon"><svg class="mr-icon" aria-hidden="true"><use href="#i-video"></use></svg></span>
+              <span class="attach-label">视频</span>
+            </button>
+            <button class="attach-item" type="button" data-demo-toast="已选择文件">
+              <span class="attach-icon"><svg class="mr-icon" aria-hidden="true"><use href="#i-file"></use></svg></span>
+              <span class="attach-label">文件</span>
+            </button>
+          </div>
+          <p class="demo-caption">菜单在输入框上方展开，使用相同的圆角与投影。</p>
+        </div>
+
+        <div class="mr-card">
+          <div class="mr-card-title">品牌组合</div>
+          <div class="mr-card-hint">品牌名与副标题在所有页面保持同一组合。</div>
+          <div class="brand" style="gap:12px;">
+            <span class="brand-mark">
+              <svg class="mr-icon" aria-hidden="true"><use href="#i-logo"></use></svg>
+            </span>
+            <span class="brand-text">
+              <span class="brand-name" style="font-size:20px;">MsgRail</span>
+              <span class="brand-sub">分布式消息推送系统</span>
+            </span>
+          </div>
+          <div class="mr-divider"></div>
+          <div class="demo-row">
+            <span class="mr-pill mr-pill-accent">Brand mark</span>
+            <span class="mr-pill">Orbit</span>
+            <span class="mr-pill">Gradient</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Chat surface -------------------------------------------------------->
+    <section class="section" id="chat">
+      <div class="section-head">
+        <span class="mr-eyebrow">03 / Chat surface</span>
+        <h2>单聊界面</h2>
+        <p>完整复刻 index.html 的布局与类名：会话列表、消息气泡、图片 / 视频 / 文件消息、输入区与附件菜单。</p>
+      </div>
+
+      <div class="chat-demo">
+        <div class="chat-demo-bar">
+          <span class="win-dot dot-red"></span>
+          <span class="win-dot dot-amber"></span>
+          <span class="win-dot dot-green"></span>
+          <span class="bar-title">index.html · 单聊</span>
+          <span class="bar-right"><span class="mr-dot mr-dot-online"></span>已连接</span>
+        </div>
+
+        <div class="chat-demo-body">
+          <aside id="sidebar">
+            <div class="sidebar-header">
+              <div class="brand">
+                <span class="brand-mark">
+                  <svg class="mr-icon" aria-hidden="true"><use href="#i-logo"></use></svg>
+                </span>
+                <span class="brand-text">
+                  <span class="brand-name">MsgRail</span>
+                  <span class="brand-sub">分布式消息推送系统</span>
+                </span>
+              </div>
+              <button class="mr-btn mr-btn-icon" type="button" aria-label="新建会话" title="新建会话">
+                <svg class="mr-icon" aria-hidden="true"><use href="#i-plus"></use></svg>
+              </button>
+            </div>
+
+            <div id="nav-panel">
+              <div class="session-toolbar">
+                <input class="form-control" placeholder="输入对方 UserID..." aria-label="对方 UserID" />
+                <button class="btn-primary" type="button">私聊</button>
+              </div>
+
+              <div class="session-section-label">
+                <span>最近会话</span>
+                <button type="button">刷新</button>
+              </div>
+
+              <div class="session-list-container">
+                <div class="session-item active">
+                  <div class="avatar-placeholder">林</div>
+                  <div class="session-info">
+                    <div class="session-name">林知远</div>
+                    <div class="session-preview">架构图我更新了一版...</div>
+                  </div>
+                  <div class="session-meta">
+                    <span class="session-time">10:28</span>
+                    <span class="unread-badge">2</span>
+                  </div>
+                </div>
+
+                <div class="session-item">
+                  <div class="avatar-placeholder">周</div>
+                  <div class="session-info">
+                    <div class="session-name">周可</div>
+                    <div class="session-preview">压测数据已经同步到文档</div>
+                  </div>
+                  <div class="session-meta">
+                    <span class="session-time">09:41</span>
+                  </div>
+                </div>
+
+                <div class="session-item">
+                  <div class="avatar-placeholder">AL</div>
+                  <div class="session-info">
+                    <div class="session-name">Alice</div>
+                    <div class="session-preview">The deployment is ready.</div>
+                  </div>
+                  <div class="session-meta">
+                    <span class="session-time">昨天</span>
+                  </div>
+                </div>
+
+                <div class="session-item">
+                  <div class="avatar-placeholder">CS</div>
+                  <div class="session-info">
+                    <div class="session-name">Customer Support</div>
+                    <div class="session-preview">工单 #4821 已关闭</div>
+                  </div>
+                  <div class="session-meta">
+                    <span class="session-time">周一</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="user-profile-bar">
+                <div class="demo-profile-user">
+                  <div class="avatar-placeholder">我</div>
+                  <div class="demo-profile-copy">
+                    <span class="user-info">User 1001</span>
+                    <span class="user-status"><span class="mr-dot mr-dot-online"></span>在线</span>
+                  </div>
+                </div>
+                <button class="logout-btn" type="button">退出</button>
+              </div>
+            </div>
+          </aside>
+
+          <section id="main">
+            <div class="chat-header">
+              <div>
+                <span class="chat-title">与 林知远 的会话</span>
+                <span class="chat-sub">Session 1001-1002 · 单聊通道</span>
+              </div>
+              <div class="chat-actions">
+                <span id="online-count">连接正常</span>
+                <button type="button">标记已读</button>
+                <button type="button">拉取历史</button>
+              </div>
+            </div>
+
+            <div id="messages">
+              <div class="msg-system">系统 · 会话已建立，消息通道正常</div>
+
+              <div class="msg-row other">
+                <div class="msg-avatar">林</div>
+                <div class="msg-content-wrapper">
+                  <div class="msg-name"><span>林知远</span><span>10:24</span></div>
+                  <div class="msg-bubble">架构图我更新了一版，重点标了推送链路。</div>
+                </div>
+              </div>
+
+              <div class="msg-row other">
+                <div class="msg-avatar">林</div>
+                <div class="msg-content-wrapper">
+                  <div class="msg-name"><span>林知远</span><span>10:24</span></div>
+                  <div class="msg-bubble msg-image-bubble">
+                    <div class="msg-image-frame">
+                      <div class="msg-image-preview demo-image">
+                        <span class="demo-image-label">Architecture</span>
+                      </div>
+                    </div>
+                    <div class="msg-image-caption">sparkpush-architecture.png</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="msg-row me">
+                <div class="msg-avatar">我</div>
+                <div class="msg-content-wrapper">
+                  <div class="msg-name"><span>我</span><span>10:25</span></div>
+                  <div class="msg-bubble">看到了，WS 下行和 Kafka 消费的边界很清楚。</div>
+                </div>
+              </div>
+
+              <div class="msg-row other">
+                <div class="msg-avatar">林</div>
+                <div class="msg-content-wrapper">
+                  <div class="msg-name"><span>林知远</span><span>10:27</span></div>
+                  <div class="msg-bubble msg-video-bubble">
+                    <div class="msg-video-card">
+                      <div class="msg-video-poster demo-video"></div>
+                      <div class="msg-video-play">
+                        <svg class="mr-icon" aria-hidden="true"><use href="#i-play"></use></svg>
+                      </div>
+                      <div class="msg-video-duration">00:42</div>
+                    </div>
+                    <div class="msg-video-caption">推送链路压测记录</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="msg-row other">
+                <div class="msg-avatar">林</div>
+                <div class="msg-content-wrapper">
+                  <div class="msg-name"><span>林知远</span><span>10:28</span></div>
+                  <div class="msg-bubble msg-file-bubble">
+                    <div class="msg-file-card">
+                      <div class="msg-file-icon demo-file-icon">PDF</div>
+                      <div class="msg-file-info">
+                        <div class="msg-file-name">sparkpush-architecture.pdf</div>
+                        <div class="msg-file-meta">2.4 MB · 点击下载</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="msg-row me">
+                <div class="msg-avatar">我</div>
+                <div class="msg-content-wrapper">
+                  <div class="msg-name"><span>我</span><span>10:29</span></div>
+                  <div class="msg-bubble">收到。我把压测结果整理到文档里。</div>
+                </div>
+              </div>
+            </div>
+
+            <div id="input-area">
+              <div id="attach-panel" class="hidden" role="menu" aria-label="发送附件">
+                <button class="attach-item" type="button" data-demo-toast="已选择图片">
+                  <span class="attach-icon"><svg class="mr-icon" aria-hidden="true"><use href="#i-image"></use></svg></span>
+                  <span class="attach-label">图片</span>
+                </button>
+                <button class="attach-item" type="button" data-demo-toast="已选择视频">
+                  <span class="attach-icon"><svg class="mr-icon" aria-hidden="true"><use href="#i-video"></use></svg></span>
+                  <span class="attach-label">视频</span>
+                </button>
+                <button class="attach-item" type="button" data-demo-toast="已选择文件">
+                  <span class="attach-icon"><svg class="mr-icon" aria-hidden="true"><use href="#i-file"></use></svg></span>
+                  <span class="attach-label">文件</span>
+                </button>
+              </div>
+
+              <button id="plus-btn" type="button" title="发送图片/视频/文件" aria-label="更多功能" aria-haspopup="menu" aria-expanded="false" aria-controls="attach-panel">
+                <svg class="mr-icon" aria-hidden="true"><use href="#i-plus"></use></svg>
+              </button>
+              <input id="msg-text" placeholder="输入消息... (Enter 发送)" aria-label="消息内容" />
+              <button id="send-btn" type="button">发送</button>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <!-- Other surfaces ------------------------------------------------------>
+    <section class="section" id="surfaces">
+      <div class="section-head">
+        <span class="mr-eyebrow">04 / Other surfaces</span>
+        <h2>其他界面</h2>
+        <p>弹幕与后台沿用同一套令牌，但保留各自的场景气质：前者更深、更亮，后者更紧凑、更工具化。</p>
+      </div>
+
+      <div class="surface-grid">
+        <div class="mr-card">
+          <div class="mr-card-title">视频弹幕</div>
+          <div class="mr-card-hint">danmaku.html · 弹幕层与播放控制</div>
+          <div class="danmaku-stage">
+            <span class="danmaku-line d1">这条链路稳了</span>
+            <span class="danmaku-line d2">P95 12ms，可以</span>
+            <span class="danmaku-line d3">轨道设计好看</span>
+            <span class="danmaku-line d4">消息已送达</span>
+            <span class="stage-title">Danmaku layer</span>
+          </div>
+          <div class="danmaku-controls">
+            <input class="mr-input" placeholder="发一条弹幕..." aria-label="弹幕内容" />
+            <button class="mr-btn mr-btn-primary" type="button" data-demo-toast="弹幕已发送">
+              <svg class="mr-icon mr-icon-sm" aria-hidden="true"><use href="#i-send"></use></svg>
+              发送
+            </button>
+          </div>
+          <div class="danmaku-status">
+            <span class="mr-pill mr-pill-success"><span class="mr-dot mr-dot-online"></span>弹幕开启</span>
+            <span class="mr-pill">速度 正常</span>
+            <span class="mr-pill">字号 16</span>
+            <span class="mr-pill">不透明度 90%</span>
+          </div>
+        </div>
+
+        <div class="mr-card">
+          <div class="mr-card-title">房间管理</div>
+          <div class="mr-card-hint">admin_chatroom.html · 运营视角</div>
+
+          <div class="mr-field">
+            <label class="mr-label" for="demo-new-room">新房间名称</label>
+            <div class="demo-row">
+              <input class="mr-input" id="demo-new-room" placeholder="例如 tech-talk" />
+              <button class="mr-btn mr-btn-primary" type="button" data-demo-toast="房间已创建">创建</button>
+            </div>
+          </div>
+
+          <div class="mr-divider"></div>
+
+          <div class="admin-preview">
+            <div class="admin-room-row">
+              <div class="admin-room-name">
+                <span class="admin-room-id">101</span>
+                <span>global</span>
+              </div>
+              <span class="admin-room-owner">owner 1001</span>
+              <button class="mr-btn mr-btn-ghost mr-btn-icon" type="button" aria-label="复制房间链接" title="复制房间链接" data-demo-toast="房间链接已复制">
+                <svg class="mr-icon mr-icon-sm" aria-hidden="true"><use href="#i-copy"></use></svg>
+              </button>
+            </div>
+            <div class="admin-room-row">
+              <div class="admin-room-name">
+                <span class="admin-room-id">102</span>
+                <span>tech-talk</span>
+              </div>
+              <span class="admin-room-owner">owner 1002</span>
+              <button class="mr-btn mr-btn-ghost mr-btn-icon" type="button" aria-label="复制房间链接" title="复制房间链接" data-demo-toast="房间链接已复制">
+                <svg class="mr-icon mr-icon-sm" aria-hidden="true"><use href="#i-copy"></use></svg>
+              </button>
+            </div>
+            <div class="admin-room-row">
+              <div class="admin-room-name">
+                <span class="admin-room-id">103</span>
+                <span>random</span>
+              </div>
+              <span class="admin-room-owner">owner 1003</span>
+              <button class="mr-btn mr-btn-ghost mr-btn-icon" type="button" aria-label="复制房间链接" title="复制房间链接" data-demo-toast="房间链接已复制">
+                <svg class="mr-icon mr-icon-sm" aria-hidden="true"><use href="#i-copy"></use></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="mr-divider"></div>
+
+          <div class="mr-field">
+            <label class="mr-label" for="demo-bc">全员广播</label>
+            <textarea class="mr-textarea" id="demo-bc" placeholder="广播内容..." style="min-height:64px;"></textarea>
+          </div>
+          <button class="mr-btn mr-btn-secondary mr-btn-block" type="button" data-demo-toast="广播已发送">发送广播</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Pages --------------------------------------------------------------->
+    <section class="section" id="pages">
+      <div class="section-head">
+        <span class="mr-eyebrow">05 / Coverage</span>
+        <h2>页面清单</h2>
+        <p>样张确认后按同一套令牌逐页套用，保留所有 id、类名、接口与 WebSocket 行为。</p>
+      </div>
+
+      <div class="page-grid">
+        <div class="page-card">
+          <div class="page-card-head">
+            <h3>index.html</h3>
+            <span class="page-status ready">样张</span>
+          </div>
+          <p>单聊：会话列表、消息气泡、图片 / 视频 / 文件消息与输入区。</p>
+          <span class="mr-muted mr-small">Single chat</span>
+        </div>
+
+        <div class="page-card">
+          <div class="page-card-head">
+            <h3>chatroom.html</h3>
+            <span class="page-status pending">待套用</span>
+          </div>
+          <p>群聊：房间导航、在线人数、群聊消息与输入区。</p>
+          <span class="mr-muted mr-small">Group chat</span>
+        </div>
+
+        <div class="page-card">
+          <div class="page-card-head">
+            <h3>danmaku.html</h3>
+            <span class="page-status pending">待套用</span>
+          </div>
+          <p>视频弹幕：弹幕层、播放控制、游客与登录面板。</p>
+          <span class="mr-muted mr-small">Danmaku</span>
+        </div>
+
+        <div class="page-card">
+          <div class="page-card-head">
+            <h3>admin_chatroom.html</h3>
+            <span class="page-status pending">待套用</span>
+          </div>
+          <p>管理后台：房间创建、全员广播与分享链接。</p>
+          <span class="mr-muted mr-small">Admin</span>
+        </div>
+
+        <div class="page-card">
+          <div class="page-card-head">
+            <h3>test.html</h3>
+            <span class="page-status pending">待套用</span>
+          </div>
+          <p>调试控制台：双面板联调工具，保留紧凑工具风。</p>
+          <span class="mr-muted mr-small">Console</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="preview-footer">
+    <div class="footer-brand">
+      <span class="brand-mark">
+        <svg class="mr-icon" aria-hidden="true"><use href="#i-logo"></use></svg>
+      </span>
+      <span>MsgRail · SparkPush Web Demo</span>
+    </div>
+    <span>纯原生 HTML / CSS / JS · 设计文档 docs/ui_design.md</span>
+  </footer>
+
+  <div class="mr-toast-region" id="toast-region" aria-live="polite" aria-atomic="false"></div>
+
+  <div class="mr-overlay hidden" id="demo-modal" role="dialog" aria-modal="true" aria-labelledby="demo-modal-title">
+    <div class="mr-modal">
+      <div class="mr-modal-header">
+        <span class="mr-modal-title" id="demo-modal-title">新建会话</span>
+        <button class="mr-close" type="button" data-modal-close aria-label="关闭弹窗" title="关闭">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-close"></use></svg>
+        </button>
+      </div>
+      <div class="mr-modal-body">
+        <div class="mr-field">
+          <label class="mr-label" for="modal-user">对方 User ID</label>
+          <input class="mr-input" id="modal-user" placeholder="例如 1002" />
+        </div>
+        <p class="demo-caption">输入 User ID 后创建单聊会话。该弹窗仅用于样张展示。</p>
+      </div>
+      <div class="mr-modal-footer">
+        <button class="mr-btn mr-btn-ghost" type="button" data-modal-close>取消</button>
+        <button class="mr-btn mr-btn-primary" type="button" data-demo-toast="会话已创建" data-modal-close>创建会话</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      var toastRegion = document.getElementById('toast-region');
+      var toastTimer = null;
+
+      function showToast(message) {
+        if (!toastRegion || !message) return;
+        var el = document.createElement('div');
+        el.className = 'mr-toast';
+        el.innerHTML =
+          '<svg class="mr-icon" aria-hidden="true"><use href="#i-check"></use></svg><span></span>';
+        el.querySelector('span').textContent = message;
+        toastRegion.appendChild(el);
+        if (toastTimer) clearTimeout(toastTimer);
+        toastTimer = setTimeout(function () {
+          el.classList.add('is-out');
+          setTimeout(function () {
+            if (el.parentNode) el.parentNode.removeChild(el);
+          }, 200);
+        }, 1800);
+      }
+
+      document.querySelectorAll('[data-demo-toast]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          showToast(btn.getAttribute('data-demo-toast'));
+        });
+      });
+
+      // Segment demo
+      document.querySelectorAll('[data-segment]').forEach(function (segment) {
+        segment.addEventListener('click', function (event) {
+          var btn = event.target.closest('button');
+          if (!btn) return;
+          segment.querySelectorAll('button').forEach(function (item) {
+            item.classList.toggle('active', item === btn);
+          });
+        });
+      });
+
+      // Modal demo
+      var modal = document.getElementById('demo-modal');
+      var openModal = document.getElementById('open-modal');
+      var lastFocus = null;
+
+      function openModalDialog() {
+        if (!modal) return;
+        lastFocus = document.activeElement;
+        modal.classList.remove('hidden');
+        var input = modal.querySelector('input');
+        if (input) input.focus();
+      }
+
+      function closeModalDialog() {
+        if (!modal) return;
+        modal.classList.add('hidden');
+        if (lastFocus && typeof lastFocus.focus === 'function') lastFocus.focus();
+      }
+
+      if (openModal) openModal.addEventListener('click', openModalDialog);
+
+      if (modal) {
+        modal.querySelectorAll('[data-modal-close]').forEach(function (btn) {
+          btn.addEventListener('click', closeModalDialog);
+        });
+        modal.addEventListener('click', function (event) {
+          if (event.target === modal) closeModalDialog();
+        });
+      }
+
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && modal && !modal.classList.contains('hidden')) {
+          closeModalDialog();
+        }
+      });
+
+      // Keep the sample readable from the top; sending a message scrolls to the bottom.
+      var messages = document.getElementById('messages');
+      if (messages) messages.scrollTop = 0;
+
+      // Attachment menu toggle in the sample
+      var plusBtn = document.getElementById('plus-btn');
+      var attachPanel = document.getElementById('attach-panel');
+
+      function closeAttach() {
+        if (!attachPanel || !plusBtn) return;
+        attachPanel.classList.add('hidden');
+        plusBtn.classList.remove('open');
+        plusBtn.setAttribute('aria-expanded', 'false');
+      }
+
+      if (plusBtn && attachPanel) {
+        plusBtn.addEventListener('click', function (event) {
+          event.stopPropagation();
+          var open = attachPanel.classList.toggle('hidden');
+          plusBtn.classList.toggle('open', !open);
+          plusBtn.setAttribute('aria-expanded', String(!open));
+        });
+
+        document.addEventListener('click', function (event) {
+          if (attachPanel.classList.contains('hidden')) return;
+          if (attachPanel.contains(event.target) || plusBtn.contains(event.target)) return;
+          closeAttach();
+        });
+
+        attachPanel.querySelectorAll('.attach-item').forEach(function (item) {
+          item.addEventListener('click', closeAttach);
+        });
+      }
+
+      // Composer demo: append a local message with existing chat classes
+      var msgInput = document.getElementById('msg-text');
+      var sendBtn = document.getElementById('send-btn');
+
+      function appendLocalMessage() {
+        if (!messages || !msgInput) return;
+        var text = msgInput.value.trim();
+        if (!text) return;
+
+        var row = document.createElement('div');
+        row.className = 'msg-row me';
+        row.innerHTML =
+          '<div class="msg-avatar">我</div>' +
+          '<div class="msg-content-wrapper">' +
+          '<div class="msg-name"><span>我</span><span></span></div>' +
+          '<div class="msg-bubble"></div>' +
+          '</div>';
+        row.querySelector('.msg-name span:last-child').textContent = new Date().toLocaleTimeString();
+        row.querySelector('.msg-bubble').textContent = text;
+        messages.appendChild(row);
+        msgInput.value = '';
+        messages.scrollTop = messages.scrollHeight;
+        msgInput.focus();
+      }
+
+      if (sendBtn) sendBtn.addEventListener('click', appendLocalMessage);
+      if (msgInput) {
+        msgInput.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter' && !event.isComposing) {
+            event.preventDefault();
+            appendLocalMessage();
+          }
+        });
+      }
+    })();
+  </script>
+</body>
+</html>

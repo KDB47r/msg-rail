@@ -1,9 +1,13 @@
 # 图片媒体消息 API 规格（草案 v0.1）
 
-> 状态：设计讨论稿，**不包含实现代码**。  
-> 日期：2026-11-08  
-> 范围：只覆盖已确认的第一阶段——**单聊图片 + MinIO 直传 + HTTP 发送 + micro/CSS 模糊预览**。  
-> 视频、语音、文件、聊天室、分片上传、HLS 不在本规格内，后续单独扩展。
+> **注意：第一阶段已经实现，实际字段与流程以 [`media_implementation.md`](media_implementation.md) 为准。视频消息也已实现，见 [`video_message_implementation.md`](video_message_implementation.md)。**
+>
+> 本文保留为设计阶段的接口讨论稿，其中 `size`/`file_name`、GET 响应结构、complete 返回 `processing`、绑定顺序等细节与最终代码不同。
+>
+> 状态：历史设计讨论稿，**不包含实现代码**。
+> 日期：2026-11-08
+> 范围：只覆盖已确认的第一阶段——**单聊图片 + MinIO 直传 + HTTP 发送 + micro/CSS 模糊预览**。
+> 视频、文件、语音、聊天室、分片上传、HLS 不在本规格内；图片/文件实际实现见 [`media_implementation.md`](media_implementation.md)，视频见 [`video_message_implementation.md`](video_message_implementation.md)。
 
 ---
 

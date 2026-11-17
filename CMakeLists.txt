@@ -75,6 +75,7 @@ target_link_libraries(websocketpp INTERFACE asio)
 
 add_subdirectory(proto)
 add_subdirectory(common)
+add_subdirectory(media)
 add_subdirectory(logic)
 add_subdirectory(comet)
 add_subdirectory(job)

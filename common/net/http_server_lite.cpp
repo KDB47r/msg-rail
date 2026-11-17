@@ -45,10 +45,18 @@ const char* ReasonPhrase(int code) {
             return "Method Not Allowed";
         case 409:
             return "Conflict";
+        case 413:
+            return "Payload Too Large";
+        case 415:
+            return "Unsupported Media Type";
         case 416:
             return "Range Not Satisfiable";
+        case 429:
+            return "Too Many Requests";
         case 500:
             return "Internal Server Error";
+        case 503:
+            return "Service Unavailable";
         default:
             return "OK";
     }

@@ -188,6 +188,29 @@ bool ConversationStore::GetUnread(int64_t user_id,
     return true;
 }
 
+// 会话最新序号：Redis 的 session:{sid}:seq 是实时值，缺失时回源 MySQL。
+bool ConversationStore::GetLastSeq(const std::string& session_id,
+                                   int64_t* last_seq, std::string* err_msg) {
+    if (!last_seq) {
+        if (err_msg) *err_msg = "last_seq pointer is null";
+        return false;
+    }
+    *last_seq = 0;
+    if (redis_store_ && redis_store_->GetSessionLastSeq(session_id, last_seq)) {
+        return true;
+    }
+    if (!session_dao_) {
+        if (err_msg) *err_msg = "session dao not initialized";
+        return false;
+    }
+    Session session;
+    if (!session_dao_->GetSessionById(session_id, &session, err_msg)) {
+        return false;
+    }
+    *last_seq = session.last_msg_seq;
+    return true;
+}
+
 // 列出用户的单聊会话及对方信息。
 bool ConversationStore::ListUserSingleSessions(int64_t user_id,
                                                std::vector<Session>* sessions,

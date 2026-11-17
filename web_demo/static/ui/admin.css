@@ -1,0 +1,318 @@
+/* ==========================================================================
+   MsgRail admin console
+   ========================================================================== */
+
+body.admin-app {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background-color: var(--mr-bg);
+  background-image: radial-gradient(58% 40% at 88% 0%, var(--mr-aurora-1), transparent 68%),
+    radial-gradient(48% 38% at 0% 90%, var(--mr-aurora-2), transparent 70%);
+}
+
+.admin-shell {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 22px 20px 56px;
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 4px 2px 24px;
+}
+
+.admin-header .brand {
+  flex: 1;
+}
+
+.admin-header .mr-pill {
+  flex: 0 0 auto;
+}
+
+.admin-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 6px 0 12px;
+  border: 1px solid var(--mr-border);
+  border-radius: var(--mr-r-pill);
+  background: var(--mr-surface);
+  color: var(--mr-text-3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+#admin-id {
+  color: var(--mr-text);
+  font-family: var(--mr-font-mono);
+  font-size: 11.5px;
+}
+
+.admin-user .mr-btn {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--mr-r-pill);
+  font-size: 12px;
+}
+
+/* Login ------------------------------------------------------------------ */
+.admin-login {
+  max-width: 920px;
+  margin: 6vh auto 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 40px;
+  align-items: center;
+  padding: 36px;
+}
+
+.admin-login-copy h1 {
+  margin: 10px 0 12px;
+  font-size: clamp(26px, 4vw, 34px);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.admin-login-copy p {
+  max-width: 420px;
+  color: var(--mr-text-3);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.admin-login-points {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 22px;
+  padding: 0;
+  list-style: none;
+}
+
+.admin-login-points li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--mr-text-2);
+  font-size: 12.5px;
+}
+
+.admin-login-points .mr-icon {
+  width: 15px;
+  height: 15px;
+  color: var(--mr-accent);
+}
+
+.admin-login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--mr-border);
+  border-radius: var(--mr-r-lg);
+  background: var(--mr-surface-2);
+}
+
+.admin-error {
+  min-height: 18px;
+  color: var(--mr-danger);
+  font-size: 12px;
+}
+
+.admin-success {
+  min-height: 18px;
+  margin-top: 10px;
+  color: var(--mr-success);
+  font-size: 12px;
+}
+
+/* Dashboard -------------------------------------------------------------- */
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.admin-grid .mr-card,
+.admin-rooms {
+  margin-bottom: 0;
+}
+
+.admin-grid .mr-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.admin-grid .mr-card .mr-field + .mr-field {
+  margin-top: 10px;
+}
+
+.admin-grid .mr-card .mr-btn {
+  align-self: flex-start;
+  margin-top: 14px;
+}
+
+.admin-grid .mr-card .mr-select {
+  height: 38px;
+}
+
+.admin-grid .mr-card .mr-textarea {
+  min-height: 78px;
+}
+
+.admin-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.admin-section-head h3 {
+  margin: 0 0 2px;
+}
+
+.admin-section-head p {
+  color: var(--mr-text-3);
+  font-size: 12px;
+}
+
+.admin-room-list {
+  max-height: 380px;
+  overflow-y: auto;
+  border-top: 1px solid var(--mr-border);
+}
+
+.admin-room-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 4px;
+  border-bottom: 1px solid var(--mr-border);
+}
+
+.admin-room-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.admin-room-id {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: var(--mr-r-pill);
+  background: var(--mr-accent-soft);
+  color: var(--mr-accent);
+  font-family: var(--mr-font-mono);
+  font-size: 11px;
+}
+
+.admin-room-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--mr-text);
+  font-size: 13.5px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-room-owner {
+  flex: 0 0 auto;
+  color: var(--mr-text-3);
+  font-size: 11.5px;
+}
+
+.admin-empty {
+  padding: 30px 12px;
+  color: var(--mr-text-3);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* Share modal ------------------------------------------------------------ */
+#share-modal .mr-modal {
+  width: 460px;
+}
+
+#share-modal .mr-modal-body p {
+  margin-bottom: 10px;
+  color: var(--mr-text-3);
+  font-size: 13px;
+}
+
+#share-modal .mr-input {
+  font-family: var(--mr-font-mono);
+  font-size: 12px;
+}
+
+#copy-tip {
+  min-height: 20px;
+  margin-top: 8px;
+  color: var(--mr-success);
+  font-size: 12px;
+}
+
+#copy-tip.is-error {
+  color: var(--mr-danger);
+}
+
+/* Responsive ------------------------------------------------------------- */
+@media (max-width: 860px) {
+  .admin-login {
+    grid-template-columns: 1fr;
+    gap: 24px;
+    margin-top: 2vh;
+    padding: 26px;
+  }
+
+  .admin-login-copy p {
+    max-width: none;
+  }
+
+  .admin-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .admin-shell {
+    padding: 16px 12px 40px;
+  }
+
+  .admin-header {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding-bottom: 18px;
+  }
+
+  .admin-header .brand {
+    flex: 1 1 100%;
+  }
+
+  .admin-header .theme-toggle {
+    margin-left: auto;
+  }
+
+  .admin-login {
+    padding: 20px;
+  }
+
+  .admin-room-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .admin-room-row .mr-btn {
+    align-self: flex-end;
+  }
+}

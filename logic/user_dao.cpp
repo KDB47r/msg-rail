@@ -115,7 +115,7 @@ bool UserDao::GetUserByAccount(const std::string& account, User* user,
     }
 
     const char* sql =
-        "SELECT id, account, name, password_hash FROM user "
+        "SELECT id, account, name, avatar_media_id, password_hash FROM user "
         "WHERE account = ? LIMIT 1";
 
     MYSQL_STMT* stmt = mysql_stmt_init(conn);
@@ -174,15 +174,17 @@ bool UserDao::GetUserByAccount(const std::string& account, User* user,
         return false;
     }
 
-    MYSQL_BIND result[4];
+    MYSQL_BIND result[5];
     memset(result, 0, sizeof(result));
 
     long long id_buf = 0;
     char account_buf[128] = {0};
     char name_buf[128] = {0};
+    char avatar_buf[64] = {0};
     char pwd_buf[256] = {0};
     unsigned long account_out_len = 0;
     unsigned long name_out_len = 0;
+    unsigned long avatar_out_len = 0;
     unsigned long pwd_out_len = 0;
 
     result[0].buffer_type = MYSQL_TYPE_LONGLONG;
@@ -200,9 +202,14 @@ bool UserDao::GetUserByAccount(const std::string& account, User* user,
     result[2].length = &name_out_len;
 
     result[3].buffer_type = MYSQL_TYPE_STRING;
-    result[3].buffer = pwd_buf;
-    result[3].buffer_length = sizeof(pwd_buf);
-    result[3].length = &pwd_out_len;
+    result[3].buffer = avatar_buf;
+    result[3].buffer_length = sizeof(avatar_buf);
+    result[3].length = &avatar_out_len;
+
+    result[4].buffer_type = MYSQL_TYPE_STRING;
+    result[4].buffer = pwd_buf;
+    result[4].buffer_length = sizeof(pwd_buf);
+    result[4].length = &pwd_out_len;
 
     if (mysql_stmt_bind_result(stmt, result) != 0) {
         std::string e = mysql_stmt_error(stmt);
@@ -224,6 +231,7 @@ bool UserDao::GetUserByAccount(const std::string& account, User* user,
     user->id = id_buf;
     user->account.assign(account_buf, account_out_len);
     user->name.assign(name_buf, name_out_len);
+    user->avatar_media_id.assign(avatar_buf, avatar_out_len);
     user->password_hash.assign(pwd_buf, pwd_out_len);
 
     mysql_stmt_close(stmt);
@@ -243,7 +251,7 @@ bool UserDao::GetUserById(int64_t user_id, User* user, std::string* err_msg) {
     }
 
     const char* sql =
-        "SELECT id, account, name, password_hash FROM user "
+        "SELECT id, account, name, avatar_media_id, password_hash FROM user "
         "WHERE id = ? LIMIT 1";
 
     MYSQL_STMT* stmt = mysql_stmt_init(conn);
@@ -302,15 +310,17 @@ bool UserDao::GetUserById(int64_t user_id, User* user, std::string* err_msg) {
         return false;
     }
 
-    MYSQL_BIND result[4];
+    MYSQL_BIND result[5];
     memset(result, 0, sizeof(result));
 
     long long id_buf = 0;
     char account_buf[128] = {0};
     char name_buf[128] = {0};
+    char avatar_buf[64] = {0};
     char pwd_buf[256] = {0};
     unsigned long account_out_len = 0;
     unsigned long name_out_len = 0;
+    unsigned long avatar_out_len = 0;
     unsigned long pwd_out_len = 0;
 
     result[0].buffer_type = MYSQL_TYPE_LONGLONG;
@@ -328,9 +338,14 @@ bool UserDao::GetUserById(int64_t user_id, User* user, std::string* err_msg) {
     result[2].length = &name_out_len;
 
     result[3].buffer_type = MYSQL_TYPE_STRING;
-    result[3].buffer = pwd_buf;
-    result[3].buffer_length = sizeof(pwd_buf);
-    result[3].length = &pwd_out_len;
+    result[3].buffer = avatar_buf;
+    result[3].buffer_length = sizeof(avatar_buf);
+    result[3].length = &avatar_out_len;
+
+    result[4].buffer_type = MYSQL_TYPE_STRING;
+    result[4].buffer = pwd_buf;
+    result[4].buffer_length = sizeof(pwd_buf);
+    result[4].length = &pwd_out_len;
 
     if (mysql_stmt_bind_result(stmt, result) != 0) {
         std::string e = mysql_stmt_error(stmt);
@@ -352,8 +367,303 @@ bool UserDao::GetUserById(int64_t user_id, User* user, std::string* err_msg) {
     user->id = id_buf;
     user->account.assign(account_buf, account_out_len);
     user->name.assign(name_buf, name_out_len);
+    user->avatar_media_id.assign(avatar_buf, avatar_out_len);
     user->password_hash.assign(pwd_buf, pwd_out_len);
 
+    mysql_stmt_close(stmt);
+    return true;
+}
+
+// 批量查询用户资料。动态生成 IN 占位符，所有值仍通过 prepared statement
+// 绑定，不拼接用户输入。
+bool UserDao::ListUsersByIds(const std::vector<int64_t>& user_ids,
+                             std::vector<User>* users, std::string* err_msg) {
+    if (!users) {
+        if (err_msg) *err_msg = "users pointer is null";
+        return false;
+    }
+    users->clear();
+    if (user_ids.empty()) return true;
+    if (!pool_) {
+        if (err_msg) *err_msg = "mysql pool not initialized";
+        return false;
+    }
+    auto guard = pool_->Acquire();
+    MYSQL* conn = guard.get();
+    if (!conn) {
+        if (err_msg) *err_msg = "no mysql connection";
+        return false;
+    }
+
+    std::string sql =
+        "SELECT id, account, name, avatar_media_id, password_hash FROM user "
+        "WHERE id IN (";
+    for (size_t i = 0; i < user_ids.size(); ++i) {
+        if (i > 0) sql += ",";
+        sql += "?";
+    }
+    sql += ")";
+
+    MYSQL_STMT* stmt = mysql_stmt_init(conn);
+    if (!stmt) {
+        if (err_msg) *err_msg = "mysql_stmt_init failed";
+        return false;
+    }
+    if (mysql_stmt_prepare(stmt, sql.c_str(),
+                           static_cast<unsigned long>(sql.size())) != 0) {
+        if (err_msg) *err_msg = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
+
+    std::vector<long long> id_values;
+    id_values.reserve(user_ids.size());
+    for (int64_t id : user_ids) id_values.push_back(id);
+    std::vector<MYSQL_BIND> param(user_ids.size());
+    memset(param.data(), 0, sizeof(MYSQL_BIND) * param.size());
+    for (size_t i = 0; i < user_ids.size(); ++i) {
+        param[i].buffer_type = MYSQL_TYPE_LONGLONG;
+        param[i].buffer = &id_values[i];
+        param[i].is_unsigned = 0;
+    }
+    if (mysql_stmt_bind_param(stmt, param.data()) != 0) {
+        if (err_msg) *err_msg = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
+    if (mysql_stmt_execute(stmt) != 0) {
+        if (err_msg) *err_msg = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
+    if (mysql_stmt_store_result(stmt) != 0) {
+        if (err_msg) *err_msg = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
+
+    MYSQL_BIND result[5];
+    memset(result, 0, sizeof(result));
+    long long id_buf = 0;
+    char account_buf[128] = {0};
+    char name_buf[128] = {0};
+    char avatar_buf[64] = {0};
+    char pwd_buf[256] = {0};
+    unsigned long account_len = 0;
+    unsigned long name_len = 0;
+    unsigned long avatar_len = 0;
+    unsigned long pwd_len = 0;
+
+    result[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    result[0].buffer = &id_buf;
+    result[0].is_unsigned = 0;
+    result[1].buffer_type = MYSQL_TYPE_STRING;
+    result[1].buffer = account_buf;
+    result[1].buffer_length = sizeof(account_buf);
+    result[1].length = &account_len;
+    result[2].buffer_type = MYSQL_TYPE_STRING;
+    result[2].buffer = name_buf;
+    result[2].buffer_length = sizeof(name_buf);
+    result[2].length = &name_len;
+    result[3].buffer_type = MYSQL_TYPE_STRING;
+    result[3].buffer = avatar_buf;
+    result[3].buffer_length = sizeof(avatar_buf);
+    result[3].length = &avatar_len;
+    result[4].buffer_type = MYSQL_TYPE_STRING;
+    result[4].buffer = pwd_buf;
+    result[4].buffer_length = sizeof(pwd_buf);
+    result[4].length = &pwd_len;
+
+    if (mysql_stmt_bind_result(stmt, result) != 0) {
+        if (err_msg) *err_msg = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
+
+    while (true) {
+        int fetch_ret = mysql_stmt_fetch(stmt);
+        if (fetch_ret == MYSQL_NO_DATA) break;
+        if (fetch_ret != 0 && fetch_ret != MYSQL_DATA_TRUNCATED) {
+            if (err_msg) *err_msg = mysql_stmt_error(stmt);
+            mysql_stmt_close(stmt);
+            return false;
+        }
+        User user;
+        user.id = id_buf;
+        user.account.assign(account_buf, account_len);
+        user.name.assign(name_buf, name_len);
+        user.avatar_media_id.assign(avatar_buf, avatar_len);
+        user.password_hash.assign(pwd_buf, pwd_len);
+        users->push_back(std::move(user));
+    }
+    mysql_stmt_close(stmt);
+    return true;
+}
+
+bool UserDao::SearchUsersByName(const std::string& name, int limit, int offset,
+                                std::vector<User>* users, std::string* err_msg) {
+    if (!users) {
+        if (err_msg) *err_msg = "users pointer is null";
+        return false;
+    }
+    users->clear();
+    if (!pool_) {
+        if (err_msg) *err_msg = "mysql pool not initialized";
+        return false;
+    }
+    auto guard = pool_->Acquire();
+    MYSQL* conn = guard.get();
+    if (!conn) {
+        if (err_msg) *err_msg = "no mysql connection";
+        return false;
+    }
+
+    const char* sql =
+        "SELECT id, account, name, avatar_media_id, password_hash FROM user "
+        "WHERE name = ? AND name <> '' ORDER BY id LIMIT ? OFFSET ?";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn);
+    if (!stmt) {
+        if (err_msg) *err_msg = "mysql_stmt_init failed";
+        return false;
+    }
+    if (mysql_stmt_prepare(stmt, sql,
+                           static_cast<unsigned long>(strlen(sql))) != 0) {
+        if (err_msg) *err_msg = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
+
+    MYSQL_BIND param[3];
+    memset(param, 0, sizeof(param));
+    unsigned long name_len = static_cast<unsigned long>(name.size());
+    long long limit_value = limit;
+    long long offset_value = offset;
+    param[0].buffer_type = MYSQL_TYPE_STRING;
+    param[0].buffer = const_cast<char*>(name.data());
+    param[0].buffer_length = name_len;
+    param[0].length = &name_len;
+    param[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    param[1].buffer = &limit_value;
+    param[2].buffer_type = MYSQL_TYPE_LONGLONG;
+    param[2].buffer = &offset_value;
+
+    if (mysql_stmt_bind_param(stmt, param) != 0 ||
+        mysql_stmt_execute(stmt) != 0 ||
+        mysql_stmt_store_result(stmt) != 0) {
+        if (err_msg) *err_msg = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
+
+    MYSQL_BIND result[5];
+    memset(result, 0, sizeof(result));
+    long long id_buf = 0;
+    char account_buf[128] = {0};
+    char name_buf[128] = {0};
+    char avatar_buf[64] = {0};
+    char pwd_buf[256] = {0};
+    unsigned long account_out_len = 0;
+    unsigned long name_out_len = 0;
+    unsigned long avatar_out_len = 0;
+    unsigned long pwd_out_len = 0;
+
+    result[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    result[0].buffer = &id_buf;
+    result[0].is_unsigned = 0;
+    result[1].buffer_type = MYSQL_TYPE_STRING;
+    result[1].buffer = account_buf;
+    result[1].buffer_length = sizeof(account_buf);
+    result[1].length = &account_out_len;
+    result[2].buffer_type = MYSQL_TYPE_STRING;
+    result[2].buffer = name_buf;
+    result[2].buffer_length = sizeof(name_buf);
+    result[2].length = &name_out_len;
+    result[3].buffer_type = MYSQL_TYPE_STRING;
+    result[3].buffer = avatar_buf;
+    result[3].buffer_length = sizeof(avatar_buf);
+    result[3].length = &avatar_out_len;
+    result[4].buffer_type = MYSQL_TYPE_STRING;
+    result[4].buffer = pwd_buf;
+    result[4].buffer_length = sizeof(pwd_buf);
+    result[4].length = &pwd_out_len;
+
+    if (mysql_stmt_bind_result(stmt, result) != 0) {
+        if (err_msg) *err_msg = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
+    while (true) {
+        int fetch_ret = mysql_stmt_fetch(stmt);
+        if (fetch_ret == MYSQL_NO_DATA) break;
+        if (fetch_ret != 0 && fetch_ret != MYSQL_DATA_TRUNCATED) {
+            if (err_msg) *err_msg = mysql_stmt_error(stmt);
+            mysql_stmt_close(stmt);
+            return false;
+        }
+        User user;
+        user.id = id_buf;
+        user.account.assign(account_buf, account_out_len);
+        user.name.assign(name_buf, name_out_len);
+        user.avatar_media_id.assign(avatar_buf, avatar_out_len);
+        user.password_hash.assign(pwd_buf, pwd_out_len);
+        users->push_back(std::move(user));
+    }
+    mysql_stmt_close(stmt);
+    return true;
+}
+
+bool UserDao::UpdateProfile(int64_t user_id, const std::string& name,
+                            const std::string& avatar_media_id,
+                            std::string* err_msg) {
+    if (!pool_) {
+        if (err_msg) *err_msg = "mysql pool not initialized";
+        return false;
+    }
+    auto guard = pool_->Acquire();
+    MYSQL* conn = guard.get();
+    if (!conn) {
+        if (err_msg) *err_msg = "no mysql connection";
+        return false;
+    }
+
+    const char* sql =
+        "UPDATE user SET name = ?, avatar_media_id = ? WHERE id = ?";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn);
+    if (!stmt) {
+        if (err_msg) *err_msg = "mysql_stmt_init failed";
+        return false;
+    }
+    if (mysql_stmt_prepare(stmt, sql,
+                           static_cast<unsigned long>(strlen(sql))) != 0) {
+        if (err_msg) *err_msg = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
+
+    MYSQL_BIND param[3];
+    memset(param, 0, sizeof(param));
+    unsigned long name_len = static_cast<unsigned long>(name.size());
+    unsigned long avatar_len =
+        static_cast<unsigned long>(avatar_media_id.size());
+    long long id_value = user_id;
+    param[0].buffer_type = MYSQL_TYPE_STRING;
+    param[0].buffer = const_cast<char*>(name.data());
+    param[0].buffer_length = name_len;
+    param[0].length = &name_len;
+    param[1].buffer_type = MYSQL_TYPE_STRING;
+    param[1].buffer = const_cast<char*>(avatar_media_id.data());
+    param[1].buffer_length = avatar_len;
+    param[1].length = &avatar_len;
+    param[2].buffer_type = MYSQL_TYPE_LONGLONG;
+    param[2].buffer = &id_value;
+    param[2].is_unsigned = 0;
+
+    if (mysql_stmt_bind_param(stmt, param) != 0 ||
+        mysql_stmt_execute(stmt) != 0) {
+        if (err_msg) *err_msg = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
     mysql_stmt_close(stmt);
     return true;
 }

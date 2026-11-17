@@ -21,6 +21,7 @@ namespace sparkpush {
 //   room:{<rid>}:comet_count:<cid>           - 该 comet 上该房间的用户数
 //   room:{<rid>}:online_count                - 房间在线人数
 //   rate:msg:{<uid>}                         - 限流 ZSET
+//   friends:{<uid>}                          - SET<friend_user_id> 好友关系缓存
 //
 // 同一分片维度的 key 通过 {...} hash tag 落到同一 slot，
 // 使 MGET / MULTI / EVAL 在 Cluster 模式下依然可用。
@@ -87,6 +88,11 @@ class RedisStore {
 
     // 路由变更时主动失效缓存
     void InvalidateRouteCache(int64_t user_id);
+
+    // 好友关系缓存：MySQL 是权威数据源，Redis 只做快速判定。
+    // 未命中时由 FriendService 回源 MySQL 并回填。
+    bool AddFriend(int64_t user_id, int64_t friend_user_id);
+    bool IsFriend(int64_t user_id, int64_t friend_user_id);
 
     // 滑动窗口限流：判断指定 key 在 window_ms 内是否超过 max_count
     // 返回 true 表示允许通过，false 表示被限流

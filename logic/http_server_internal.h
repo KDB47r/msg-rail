@@ -14,10 +14,32 @@
 #include "net/http_server_lite.h"
 
 namespace sparkpush {
+
+class MediaDao;
+class S3Client;
+struct User;
+
 namespace detail {
 
 using HttpRequest = ::sparkpush::net::HttpRequest;
 using HttpResponse = ::sparkpush::net::HttpResponse;
+
+// 用户公开资料视图：昵称 + 头像签名 URL，绝不包含 password_hash。
+struct UserBrief {
+    int64_t user_id{0};
+    std::string account;
+    std::string name;
+    std::string avatar_media_id;
+    std::string avatar_url;
+    int64_t avatar_expires_at{0};
+};
+
+// 头像优先使用 thumb 变体，缺失时回退原图；S3 未就绪或媒体不可用时
+// 保留 avatar_media_id，avatar_url 为空。
+bool BuildUserBrief(MediaDao* media_dao, S3Client* s3, int ttl_seconds,
+                    const User& user, UserBrief* out);
+
+nlohmann::json UserBriefToJson(const UserBrief& user, bool include_account);
 
 extern std::string g_cors_allow_origin;
 

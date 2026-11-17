@@ -9,8 +9,11 @@ check_port "Logic gRPC" 9100
 check_port "Logic HTTP" 9101
 check_port "Comet WS" 9200
 check_port "Comet gRPC" 9205
+check_port "MinIO S3" 9002
+check_port "MinIO Console" 9003
 check_port "Web Demo" 9001
 pgrep -x job_server >/dev/null && echo "[OK] Job Server" || echo "[NO] Job Server"
+pgrep -x media_worker >/dev/null && echo "[OK] media_worker" || echo "[NO] media_worker"
 echo ""
-ps -eo pid,etime,cmd | grep -E "logic_server|comet_server|job_server|web_demo_server" | grep -v grep
+ps -eo pid,etime,cmd | grep -E "logic_server|comet_server|job_server|media_worker|web_demo_server|minio" | grep -v grep
 exit 0

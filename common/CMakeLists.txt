@@ -66,6 +66,22 @@ target_link_libraries(spark_push_http
     Threads::Threads
 )
 
+# S3/MinIO 客户端：SigV4 预签名 + 内部 HEAD/GET/PUT/DELETE。
+# 不引入 AWS SDK，只依赖 OpenSSL 和 Asio。
+find_package(OpenSSL REQUIRED)
+add_library(spark_push_s3
+  s3_client.cpp
+)
+spark_push_common_includes(spark_push_s3)
+target_link_libraries(spark_push_s3
+  PRIVATE
+    spark_push_core
+    asio
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    Threads::Threads
+)
+
 # 仓外兼容入口；仓内目标按需链接上述细分组件。
 add_library(spark_push_common INTERFACE)
 target_link_libraries(spark_push_common

@@ -44,6 +44,10 @@ class ConversationStore {
     bool GetUnread(int64_t user_id, const std::string& session_id,
                    int64_t* unread, std::string* err_msg);
 
+    // 会话最新序号：Redis 快路径，缺失时回源 MySQL session.last_msg_seq。
+    bool GetLastSeq(const std::string& session_id, int64_t* last_seq,
+                    std::string* err_msg);
+
     bool ListUserSingleSessions(int64_t user_id, std::vector<Session>* sessions,
                                 std::string* err_msg);
 

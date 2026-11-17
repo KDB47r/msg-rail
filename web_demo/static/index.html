@@ -2,409 +2,165 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <title>Spark Chat - 消息中心</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
-  <link rel="stylesheet" href="auth_style.css">
-  <style>
-    :root {
-      --primary-color: #1976d2;
-      --bg-color: #f5f7fa;
-      --sidebar-bg: #ffffff;
-      --border-color: #e0e0e0;
-      --bubble-me: #e3f2fd; /* 我发的消息背景色 */
-      --bubble-other: #ffffff; /* 对方发的消息背景色 */
-      --text-color: #333;
-    }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      height: 100vh;
-      background: var(--bg-color);
-      color: var(--text-color);
-      overflow: hidden;
-    }
-
-    /* 通用工具类 */
-    .hidden { display: none !important; }
-    .flex-col { display: flex; flex-direction: column; }
-    .flex-center { display: flex; align-items: center; justify-content: center; }
-    
-    /* --- 侧边栏区域 --- */
-    #sidebar {
-      width: 300px;
-      background: var(--sidebar-bg);
-      border-right: 1px solid var(--border-color);
-      display: flex;
-      flex-direction: column;
-      z-index: 10;
-    }
-
-    .sidebar-header {
-      padding: 20px;
-      border-bottom: 1px solid var(--border-color);
-    }
-    .sidebar-header h2 { margin: 0; font-size: 20px; color: var(--primary-color); }
-
-    /* 登录面板 (默认显示) */
-    #auth-panel {
-      padding: 20px;
-      flex: 1;
-      overflow-y: auto;
-    }
-    
-    /* 登录后面板 (默认隐藏) */
-    #nav-panel {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
-
-    /* 用户信息条 */
-    .user-profile-bar {
-      padding: 15px;
-      background: #f9f9f9;
-      border-top: 1px solid var(--border-color);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-    .user-info { font-size: 14px; font-weight: bold; color: #555; }
-    .logout-btn {
-      font-size: 12px;
-      color: #ef5350;
-      cursor: pointer;
-      background: none;
-      border: none;
-      padding: 4px 8px;
-    }
-    .logout-btn:hover { background: #ffebee; border-radius: 4px; }
-
-    /* 会话列表 */
-    .session-list-container {
-      flex: 1;
-      overflow-y: auto;
-      padding: 10px;
-    }
-    .session-item {
-      padding: 12px;
-      margin-bottom: 8px;
-      background: #fff;
-      border: 1px solid transparent;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: all 0.2s;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .session-item:hover { background: #f0f7ff; }
-    .session-item.active {
-      background: #e3f2fd;
-      border-color: #bbdefb;
-    }
-    .avatar-placeholder {
-      width: 36px;
-      height: 36px;
-      background: #bdbdbd;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: #fff;
-      font-size: 12px;
-      flex-shrink: 0;
-    }
-    .session-info {
-      flex: 1;
-      overflow: hidden;
-    }
-    .session-name { font-size: 14px; font-weight: 500; margin-bottom: 2px; }
-    .session-preview { font-size: 12px; color: #999; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-    /* 登录表单样式移至 auth_style.css */
-
-    /* --- 主聊天区域 --- */
-    #main {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      background: #fff;
-    }
-    
-    /* 空状态 */
-    #empty-state {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      color: #aaa;
-    }
-    #empty-state h3 { color: #888; margin-bottom: 10px; }
-
-    /* 聊天窗口 */
-    #chat-window {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      height: 100%;
-    }
-    
-    .chat-header {
-      height: 60px;
-      border-bottom: 1px solid var(--border-color);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 20px;
-      background: #fff;
-    }
-    .chat-title { font-size: 16px; font-weight: bold; }
-    .chat-actions button {
-      border: 1px solid #ddd;
-      background: #fff;
-      padding: 4px 10px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 12px;
-      color: #666;
-    }
-    .chat-actions button:hover { background: #f5f5f5; }
-
-    #messages {
-      flex: 1;
-      padding: 20px;
-      overflow-y: auto;
-      background: var(--bg-color);
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    .msg-row {
-      display: flex;
-      gap: 10px;
-      max-width: 70%;
-    }
-    .msg-row.me {
-      align-self: flex-end;
-      flex-direction: row-reverse;
-    }
-    .msg-row.other {
-      align-self: flex-start;
-    }
-    .msg-avatar {
-      width: 36px;
-      height: 36px;
-      border-radius: 4px;
-      background: #ccc;
-      flex-shrink: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 12px;
-      color: #fff;
-    }
-    .msg-content-wrapper {
-      display: flex;
-      flex-direction: column;
-    }
-    .msg-name {
-      font-size: 12px;
-      color: #999;
-      margin-bottom: 4px;
-    }
-    .msg-row.me .msg-name { text-align: right; }
-
-    .msg-bubble {
-      padding: 10px 14px;
-      border-radius: 8px;
-      font-size: 14px;
-      line-height: 1.5;
-      word-wrap: break-word;
-      position: relative;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-    }
-    .msg-row.me .msg-bubble {
-      background: var(--bubble-me);
-      color: #0d47a1;
-      border-top-right-radius: 2px;
-    }
-    .msg-row.other .msg-bubble {
-      background: var(--bubble-other);
-      border: 1px solid #e6e6e6;
-      color: #333;
-      border-top-left-radius: 2px;
-    }
-
-    #input-area {
-      padding: 15px;
-      background: #fff;
-      border-top: 1px solid var(--border-color);
-      display: flex;
-      gap: 10px;
-    }
-    #msg-text {
-      flex: 1;
-      padding: 10px;
-      border: 1px solid #ddd;
-      border-radius: 6px;
-      font-size: 14px;
-      outline: none;
-    }
-    #msg-text:focus { border-color: var(--primary-color); }
-    #send-btn {
-      padding: 0 24px;
-      background: var(--primary-color);
-      color: #fff;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-weight: bold;
-    }
-    #send-btn:hover { background: #1565c0; }
-    
-    /* 模拟系统消息 */
-    .msg-system {
-      align-self: center;
-      background: rgba(0,0,0,0.1);
-      color: #666;
-      font-size: 12px;
-      padding: 4px 12px;
-      border-radius: 100px;
-      margin: 10px 0;
-    }
-    
-    /* Toast Notification */
-    #toast-container {
-      position: fixed;
-      top: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 9999;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      pointer-events: none;
-    }
-    .toast {
-      background: rgba(50, 50, 50, 0.9);
-      color: #fff;
-      padding: 10px 20px;
-      border-radius: 4px;
-      font-size: 14px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      animation: toast-in 0.3s ease-out forwards;
-    }
-    @keyframes toast-in {
-      from { opacity: 0; transform: translateY(-20px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    @keyframes toast-out {
-      from { opacity: 1; transform: translateY(0); }
-      to { opacity: 0; transform: translateY(-20px); }
-    }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MsgRail · 消息中心</title>
+  <meta name="description" content="MsgRail 分布式消息推送系统 · 单聊演示" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='7' fill='%232563eb'/%3E%3Cpath d='M5 17V8l7 4.5L19 8v9' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="ui/tokens.css" />
+  <link rel="stylesheet" href="ui/base.css" />
+  <link rel="stylesheet" href="ui/chat.css" />
+  <script src="ui/theme.js"></script>
+  <script src="ui/icons.js"></script>
   <script src="auth.js"></script>
+  <script src="ui/user_profile.js"></script>
 </head>
-<body>
-  <div id="toast-container"></div>
+<body class="chat-app">
+  <div id="toast-container" role="status" aria-live="polite"></div>
   <!-- 左侧侧边栏 -->
-  <div id="sidebar">
+  <aside id="sidebar">
     <div class="sidebar-header">
-      <h2>Spark Push</h2>
-      <div style="font-size:12px;color:#999;margin-top:4px;">商业化 IM 演示 (Single Chat)</div>
+      <a class="brand" href="index.html" aria-label="MsgRail 消息中心">
+        <span class="brand-mark">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-logo"></use></svg>
+        </span>
+        <span class="brand-text">
+          <span class="brand-name">MsgRail</span>
+          <span class="brand-sub">分布式消息推送系统</span>
+        </span>
+      </a>
+      <button class="theme-toggle" type="button" data-theme-toggle aria-pressed="false" aria-label="切换到深色模式" title="切换到深色模式">
+        <svg class="mr-icon icon-sun" aria-hidden="true"><use href="#i-sun"></use></svg>
+        <svg class="mr-icon icon-moon" aria-hidden="true"><use href="#i-moon"></use></svg>
+      </button>
     </div>
 
     <!-- 1. 未登录状态：显示登录/注册 -->
     <div id="auth-panel">
-      <div class="auth-tabs">
-        <button type="button" class="auth-tab active" data-mode="login">登录</button>
-        <button type="button" class="auth-tab" data-mode="register">注册</button>
+      <div class="auth-tabs" role="tablist" aria-label="登录或注册">
+        <button type="button" class="auth-tab active" data-mode="login" role="tab" aria-selected="true">登录</button>
+        <button type="button" class="auth-tab" data-mode="register" role="tab" aria-selected="false">注册</button>
       </div>
       <div class="form-group">
-        <input id="account" class="form-control" placeholder="账号 / 手机 / 邮箱" />
+        <input id="account" class="form-control" placeholder="账号 / 手机 / 邮箱" autocomplete="username" />
       </div>
       <div class="form-group hidden" id="nickname-group">
-        <input id="nickname" class="form-control" placeholder="昵称 (注册时可选)" />
+        <input id="nickname" class="form-control" placeholder="昵称（注册时可选）" />
       </div>
       <div class="form-group">
-        <input id="password" type="password" class="form-control" placeholder="密码 (6位+)" />
+        <input id="password" type="password" class="form-control" placeholder="密码（至少 6 位）" autocomplete="current-password" />
       </div>
       <button id="login-btn" class="btn-primary btn-block">立即登录</button>
       <button id="register-btn" class="btn-primary btn-block hidden">注册并自动登录</button>
-      <div id="login-status" class="status-text"></div>
-      
-      <div style="margin-top:30px; border-top:1px solid #eee; padding-top:15px;">
-         <div style="font-size:13px; font-weight:bold; margin-bottom:8px;">其他:</div>
-         <div style="display:flex; flex-direction:column; gap:6px;">
-            <a href="chatroom.html" style="font-size:13px; color:#1976d2; text-decoration:none;">👉 聊天室 (群聊)</a>
-            <a href="danmaku.html" style="font-size:13px; color:#1976d2; text-decoration:none;">👉 视频弹幕</a>
-            <a href="admin_chatroom.html" style="font-size:13px; color:#666; text-decoration:none;">🛡️ 管理后台</a>
-            <a href="test.html" style="font-size:13px; color:#e65100; text-decoration:none; font-weight:bold;">🔧 测试控制台 (双面板)</a>
-         </div>
-      </div>
+      <div id="login-status" class="status-text" role="status"></div>
+
+      <nav class="auth-links" aria-label="其他演示页面">
+        <a class="auth-link auth-link-accent" href="chatroom.html">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-users"></use></svg>
+          <span>聊天室 · 群聊</span>
+        </a>
+        <a class="auth-link" href="danmaku.html">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-video"></use></svg>
+          <span>视频弹幕</span>
+        </a>
+        <a class="auth-link" href="admin_chatroom.html">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-shield"></use></svg>
+          <span>管理后台</span>
+        </a>
+        <a class="auth-link" href="test.html">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-terminal"></use></svg>
+          <span>测试控制台</span>
+        </a>
+      </nav>
     </div>
 
     <!-- 2. 已登录状态：显示会话列表 + 底部个人信息 -->
     <div id="nav-panel" class="hidden">
       <!-- 搜索/新建会话区域 -->
-      <div style="padding:10px; border-bottom:1px solid #eee; display:flex; gap:5px;">
-        <input id="to-user" class="form-control" style="padding:6px;" placeholder="输入对方 UserID..." />
-        <button id="start-chat-btn" class="btn-primary" style="padding:6px 12px;">私聊</button>
+      <div class="session-toolbar">
+        <input id="to-user" class="form-control" placeholder="UserID 或昵称..." />
+        <button id="start-chat-btn" class="btn-primary">私聊</button>
       </div>
-      
-      <!-- 按钮组 -->
-      <div style="padding:0 10px 10px 10px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center;">
-         <span style="font-size:12px;color:#999;">最近会话</span>
-         <button id="refresh-sessions-btn" style="background:none;border:none;color:#1976d2;cursor:pointer;font-size:12px;">刷新</button>
+
+      <!-- 功能入口 -->
+      <nav class="side-nav-links" aria-label="功能入口">
+        <a class="side-nav-link" href="contacts.html">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-users"></use></svg>
+          <span>联系人</span>
+          <span id="friend-pending-badge" class="unread-badge hidden">0</span>
+        </a>
+        <a class="side-nav-link" href="profile.html">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-spark"></use></svg>
+          <span>我的资料</span>
+        </a>
+        <a class="side-nav-link" href="chatroom.html">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-users"></use></svg>
+          <span>聊天室</span>
+        </a>
+      </nav>
+
+      <!-- 列表标题 -->
+      <div class="session-section-label">
+        <span>最近会话</span>
+        <span class="section-actions">
+          <span id="global-unread" class="unread-badge hidden">0</span>
+          <button id="refresh-sessions-btn" type="button">刷新</button>
+        </span>
       </div>
 
       <!-- 列表容器 -->
       <div id="session-list" class="session-list-container">
-        <div style="text-align:center; color:#999; font-size:12px; margin-top:20px;">
-            暂无历史会话<br>请在上方输入 ID 发起聊天
+        <div class="session-empty">
+          暂无历史会话<br />
+          请在上方输入 UserID 或昵称
         </div>
       </div>
 
       <!-- 底部个人信息 -->
       <div class="user-profile-bar">
-        <div class="flex-center" style="gap:8px;">
-           <div class="avatar-placeholder" style="background:#4caf50;">Me</div>
-           <div class="flex-col">
-             <span id="my-user-id" class="user-info">User -</span>
-             <span style="font-size:10px; color:#4caf50;">● 在线</span>
-           </div>
-        </div>
+        <a class="mr-row profile-link" href="profile.html" title="编辑我的资料">
+          <div id="my-avatar" class="avatar-placeholder">Me</div>
+          <div class="user-meta">
+            <span id="my-user-id" class="user-info">User -</span>
+            <span class="user-status"><span class="mr-dot mr-dot-online"></span>在线</span>
+          </div>
+        </a>
         <button class="logout-btn" onclick="doLogout()">退出</button>
       </div>
     </div>
-  </div>
+  </aside>
 
   <!-- 右侧主区域 -->
-  <div id="main">
+  <main id="main">
     <!-- 状态 A: 未选择会话 -->
     <div id="empty-state">
-      <div style="font-size:60px; margin-bottom:20px;">👋</div>
-      <h3>欢迎使用 Spark Push</h3>
-      <p style="font-size:14px;">请在左侧选择一个联系人开始聊天</p>
+      <div class="empty-orbit" aria-hidden="true">
+        <span class="orbit-ring"></span>
+        <span class="orbit-ring ring-2"></span>
+        <span class="orbit-core">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-logo"></use></svg>
+        </span>
+        <span class="orbit-dot"></span>
+        <span class="orbit-dot dot-2"></span>
+        <span class="orbit-dot dot-3"></span>
+      </div>
+      <h3>欢迎使用 MsgRail</h3>
+      <p>请在左侧选择一个联系人开始聊天，消息会沿着轨道抵达。</p>
     </div>
 
     <!-- 状态 B: 聊天窗口 -->
     <div id="chat-window" class="hidden">
       <div class="chat-header">
-        <div class="flex-col">
-           <span class="chat-title" id="chat-title">与 User ... 聊天中</span>
-           <span style="font-size:11px; color:#999;">Session ID: <span id="session-id-disp">-</span></span>
+        <div class="chat-title-group with-avatar">
+          <div id="chat-peer-avatar" class="avatar-placeholder chat-peer-avatar">?</div>
+          <div>
+            <span class="chat-title" id="chat-title">与 User ... 聊天中</span>
+            <span class="chat-sub">Session ID <span id="session-id-disp" class="session-mono">-</span></span>
+          </div>
         </div>
         <div class="chat-actions">
-          <span style="font-size:12px; margin-right:8px; color:#666;">未读: <span id="unread-count">0</span></span>
-          <button id="mark-read-btn">标记已读</button>
-          <button id="load-more-btn">拉取更多历史</button>
+          <span class="unread-label">未读 <span id="unread-count">0</span></span>
+          <button id="mark-read-btn" type="button">标记已读</button>
+          <button id="load-more-btn" type="button">拉取更多历史</button>
         </div>
       </div>
 
@@ -413,10 +169,58 @@
       </div>
 
       <div id="input-area">
-        <input id="msg-text" placeholder="输入消息... (Enter 发送)" />
-        <button id="send-btn">发送</button>
+        <input id="image-file" type="file" accept="image/jpeg,image/png,image/webp" style="display:none" />
+        <input id="video-file" type="file" accept="video/mp4,video/webm" style="display:none" />
+        <input id="generic-file" type="file" style="display:none" />
+        <div id="attach-panel" class="hidden" role="menu" aria-label="发送附件">
+          <button type="button" class="attach-item" id="attach-image" role="menuitem">
+            <span class="attach-icon">
+              <svg class="mr-icon" aria-hidden="true"><use href="#i-image"></use></svg>
+            </span>
+            <span class="attach-label">图片</span>
+          </button>
+          <button type="button" class="attach-item" id="attach-video" role="menuitem">
+            <span class="attach-icon">
+              <svg class="mr-icon" aria-hidden="true"><use href="#i-video"></use></svg>
+            </span>
+            <span class="attach-label">视频</span>
+          </button>
+          <button type="button" class="attach-item" id="attach-file" role="menuitem">
+            <span class="attach-icon">
+              <svg class="mr-icon" aria-hidden="true"><use href="#i-file"></use></svg>
+            </span>
+            <span class="attach-label">文件</span>
+          </button>
+        </div>
+        <button id="plus-btn" type="button" title="发送图片/视频/文件" aria-label="更多功能"
+                aria-haspopup="menu" aria-expanded="false" aria-controls="attach-panel">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-plus"></use></svg>
+        </button>
+        <input id="msg-text" placeholder="输入消息，Enter 发送（可附带图片 / 视频 / 文件说明）" />
+        <button id="send-btn" type="button">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-send"></use></svg>
+          <span>发送</span>
+        </button>
       </div>
+      <div id="upload-status" style="display:none"></div>
     </div>
+  </main>
+
+  <div id="image-lightbox" role="dialog" aria-modal="true" aria-label="图片预览">
+    <button id="lightbox-close" type="button" title="关闭" aria-label="关闭">
+      <svg class="mr-icon" aria-hidden="true"><use href="#i-close"></use></svg>
+    </button>
+    <img id="lightbox-img" alt="图片预览" />
+    <div id="lightbox-caption"></div>
+    <a id="lightbox-original" href="#" target="_blank" rel="noopener">查看原图</a>
+  </div>
+
+  <div id="video-lightbox" role="dialog" aria-modal="true" aria-label="视频预览">
+    <button id="video-lightbox-close" type="button" title="关闭" aria-label="关闭">
+      <svg class="mr-icon" aria-hidden="true"><use href="#i-close"></use></svg>
+    </button>
+    <video id="lightbox-video" controls playsinline preload="metadata"></video>
+    <div id="video-lightbox-caption"></div>
   </div>
 
   <script>
@@ -436,6 +240,9 @@
     let wsManualClose = false;   // 主动登出关闭，不触发重连
     let wsRetryCount = 0;
     let wsRetryTimer = null;
+    // 资料 / 未读角标
+    let myProfile = null;
+    let navPollTimer = null;
 
     // 配置
     const logicBase = window.location.protocol + '//' + window.location.hostname + ':9101';
@@ -446,8 +253,760 @@
       if (token) h['Authorization'] = 'Bearer ' + token;
       return h;
     }
+
+    // 统一 POST 封装：非 0 code 或非 2xx 都抛出带 status 的错误。
+    async function apiPost(path, payload) {
+      const resp = await fetch(logicBase + path, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(payload || {})
+      });
+      let body = {};
+      try { body = await resp.json(); } catch (e) { body = {}; }
+      if (!resp.ok || body.code !== 0) {
+        const err = new Error(body.message || ('HTTP ' + resp.status));
+        err.status = resp.status;
+        throw err;
+      }
+      return body.data || {};
+    }
+
+    function setUnreadBadge(el, count) {
+      if (!el) return;
+      const n = Math.max(0, Number(count) || 0);
+      el.textContent = n > 99 ? '99+' : String(n);
+      el.classList.toggle('hidden', n <= 0);
+    }
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const cometWsUrl = wsProtocol + '//' + window.location.hostname + ':9200/ws';
+
+    // --- 媒体消息辅助 ---
+    const mediaCache = new Map();
+    let uploadingMedia = false;
+    const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+    const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
+    const MAX_FILE_BYTES = 50 * 1024 * 1024;
+
+    function sleep(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    // 从 content（可能是对象、JSON 字符串或包装过一层）里取出图片内容。
+    function extractImageContent(content) {
+      if (!content) return null;
+      let c = content;
+      if (typeof c === 'string') {
+        try { c = JSON.parse(c); } catch (e) { return null; }
+      }
+      if (c && c.type === 'image' && c.media_id) return c;
+      if (c && c.content && typeof c.content === 'object' &&
+          c.content.type === 'image' && c.content.media_id) {
+        return c.content;
+      }
+      return null;
+    }
+
+    // 与 extractImageContent 结构一致，只是 type 为 video。
+    function extractVideoContent(content) {
+      if (!content) return null;
+      let c = content;
+      if (typeof c === 'string') {
+        try { c = JSON.parse(c); } catch (e) { return null; }
+      }
+      if (c && c.type === 'video' && c.media_id) return c;
+      if (c && c.content && typeof c.content === 'object' &&
+          c.content.type === 'video' && c.content.media_id) {
+        return c.content;
+      }
+      return null;
+    }
+
+    // 与 extractImageContent 结构一致，只是 type 为 file。
+    function extractFileContent(content) {
+      if (!content) return null;
+      let c = content;
+      if (typeof c === 'string') {
+        try { c = JSON.parse(c); } catch (e) { return null; }
+      }
+      if (c && c.type === 'file' && c.media_id) return c;
+      if (c && c.content && typeof c.content === 'object' &&
+          c.content.type === 'file' && c.content.media_id) {
+        return c.content;
+      }
+      return null;
+    }
+
+    function formatBytes(n) {
+      const value = Number(n) || 0;
+      if (value <= 0) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      const idx = Math.min(
+        Math.floor(Math.log(value) / Math.log(1024)), units.length - 1
+      );
+      const scaled = value / Math.pow(1024, idx);
+      return (idx === 0 || scaled >= 10 ? Math.round(scaled) : scaled.toFixed(1)) +
+             ' ' + units[idx];
+    }
+
+    function formatDuration(ms) {
+      const total = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const s = total % 60;
+      const pad = n => (n < 10 ? '0' + n : String(n));
+      return h > 0 ? h + ':' + pad(m) + ':' + pad(s) : m + ':' + pad(s);
+    }
+
+    function fileExtension(name) {
+      const m = /\.([A-Za-z0-9]{1,8})$/.exec(name || '');
+      return m ? m[1].toUpperCase().slice(0, 4) : 'FILE';
+    }
+
+    function fileIconColor(name, mime) {
+      const ext = fileExtension(name).toLowerCase();
+      if (ext === 'pdf') return '#e53935';
+      if (ext === 'doc' || ext === 'docx') return '#1e88e5';
+      if (ext === 'xls' || ext === 'xlsx' || ext === 'csv') return '#43a047';
+      if (ext === 'ppt' || ext === 'pptx') return '#fb8c00';
+      if (['zip', 'rar', '7z', 'gz', 'tar'].includes(ext)) return '#8e24aa';
+      if ((mime || '').startsWith('image/')) return '#00897b';
+      return '#607d8b';
+    }
+
+    // 文件下载：先换新签名 URL，再触发下载。签名 URL 带
+    // response-content-disposition=attachment，浏览器不会直接渲染 HTML。
+    async function downloadFileMessage(content) {
+      try {
+        const meta = await loadMediaMetadata(content.media_id, true);
+        if (meta.status !== 'ready') {
+          appendSystemMsg(meta.status === 'failed'
+            ? '文件不可用：处理失败'
+            : '文件尚未就绪，请稍后再试');
+          return;
+        }
+        const url = meta.original && meta.original.url;
+        if (!url) throw new Error('没有可用的下载地址');
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = content.name || meta.original_name || 'download.bin';
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } catch (e) {
+        appendSystemMsg('文件下载失败: ' + (e && e.message ? e.message : e));
+      }
+    }
+
+    async function loadMediaMetadata(mediaId, force) {
+      const now = Date.now();
+      if (!force) {
+        const hit = mediaCache.get(mediaId);
+        if (hit && hit.expiresAt > now) return hit.data;
+      }
+      const resp = await fetch(
+        logicBase + '/api/media/' + encodeURIComponent(mediaId),
+        { method: 'GET', headers: authHeaders() }
+      );
+      const body = await resp.json();
+      if (!resp.ok || body.code !== 0) {
+        throw new Error(body.message || ('HTTP ' + resp.status));
+      }
+      const data = body.data || {};
+      if (data.status === 'ready') {
+        // 签名 URL 会在 expires_at 失效；缓存到最早过期时间前 30 秒。
+        let expiresAt = now + 5 * 60 * 1000;
+        const times = [];
+        if (data.original && data.original.expires_at) {
+          times.push(Number(data.original.expires_at));
+        }
+        Object.values(data.variants || {}).forEach(v => {
+          if (v && v.expires_at) times.push(Number(v.expires_at));
+        });
+        if (times.length) {
+          expiresAt = Math.min(expiresAt, Math.min(...times) * 1000 - 30000);
+        }
+        if (expiresAt <= now + 1000) expiresAt = now + 1000;
+        mediaCache.set(mediaId, { data, expiresAt });
+      }
+      return data;
+    }
+
+    function pickVariant(meta, names) {
+      const variants = (meta && meta.variants) || {};
+      for (const name of names) {
+        if (variants[name] && variants[name].url) return variants[name];
+      }
+      return null;
+    }
+
+    // 气泡直接用 320px thumb 清晰显示；
+    // micro 只用于 lightbox 打开瞬间的占位，点开后再换成 preview。
+    async function hydrateImageBubble(img, content, stateEl, attempt) {
+      const tries = attempt || 0;
+      if (!img.isConnected) return;
+      try {
+        const meta = await loadMediaMetadata(content.media_id);
+        if (meta.status === 'ready') {
+          const display = pickVariant(meta, ['thumb', 'micro', 'preview']) ||
+                          meta.original;
+          if (!display || !display.url) throw new Error('没有可用的缩略图');
+          img.onload = () => {
+            if (stateEl && stateEl.parentNode) stateEl.remove();
+          };
+          img.src = display.url;
+          return;
+        }
+        if (meta.status === 'failed') {
+          if (stateEl) stateEl.textContent = '图片处理失败';
+          return;
+        }
+        if (stateEl) stateEl.textContent = '处理中...';
+        if (tries < 60) {
+          setTimeout(() => hydrateImageBubble(img, content, stateEl, tries + 1), 500);
+        } else if (stateEl) {
+          stateEl.textContent = '处理超时';
+        }
+      } catch (e) {
+        if (tries < 3) {
+          setTimeout(() => hydrateImageBubble(img, content, stateEl, tries + 1), 1000);
+        } else if (stateEl) {
+          stateEl.textContent = '图片加载失败';
+        }
+      }
+    }
+
+    async function openImageLightbox(content) {
+      closeVideoLightbox();
+      const box = document.getElementById('image-lightbox');
+      const img = document.getElementById('lightbox-img');
+      const caption = document.getElementById('lightbox-caption');
+      const original = document.getElementById('lightbox-original');
+      box.classList.add('show');
+      img.classList.remove('clear');
+      img.removeAttribute('src');
+      caption.textContent = content.caption || '';
+      original.style.display = 'none';
+      try {
+        const meta = await loadMediaMetadata(content.media_id, true);
+        if (meta.status !== 'ready') {
+          caption.textContent = meta.status === 'failed'
+            ? '图片处理失败'
+            : '图片仍在处理中，请稍后再试';
+          return;
+        }
+        const micro = pickVariant(meta, ['micro', 'thumb']);
+        const preview = pickVariant(meta, ['preview', 'thumb']) || meta.original;
+        if (micro && micro.url) img.src = micro.url;
+        if (preview && preview.url) {
+          const preload = new Image();
+          preload.onload = () => {
+            img.src = preview.url;
+            img.classList.add('clear');
+          };
+          preload.onerror = () => {
+            if (meta.original && meta.original.url) img.src = meta.original.url;
+            img.classList.add('clear');
+          };
+          preload.src = preview.url;
+        } else if (meta.original && meta.original.url) {
+          img.src = meta.original.url;
+          img.classList.add('clear');
+        }
+        if (meta.original && meta.original.url) {
+          original.href = meta.original.url;
+          original.style.display = 'inline-block';
+        }
+      } catch (e) {
+        caption.textContent = '图片加载失败: ' + (e.message || e);
+      }
+    }
+
+    function closeImageLightbox() {
+      document.getElementById('image-lightbox').classList.remove('show');
+      const img = document.getElementById('lightbox-img');
+      img.removeAttribute('src');
+      img.classList.remove('clear');
+    }
+
+    // 视频卡片的 poster 是 640px JPEG，聊天列表不加载原视频。
+    async function hydrateVideoPoster(content, img, stateEl, attempt) {
+      const tries = attempt || 0;
+      if (!img.isConnected) return;
+      try {
+        const meta = await loadMediaMetadata(content.media_id);
+        if (meta.status === 'ready') {
+          const poster = pickVariant(meta, ['poster']);
+          if (poster && poster.url) {
+            img.onload = () => {
+              if (stateEl && stateEl.parentNode) stateEl.remove();
+            };
+            img.src = poster.url;
+          } else if (stateEl) {
+            stateEl.textContent = '封面加载失败';
+          }
+          return;
+        }
+        if (meta.status === 'failed') {
+          if (stateEl) stateEl.textContent = '视频处理失败';
+          return;
+        }
+        if (stateEl) stateEl.textContent = '处理中...';
+        if (tries < 60) {
+          setTimeout(() => hydrateVideoPoster(content, img, stateEl, tries + 1), 500);
+        } else if (stateEl) {
+          stateEl.textContent = '处理超时';
+        }
+      } catch (e) {
+        if (tries < 3) {
+          setTimeout(() => hydrateVideoPoster(content, img, stateEl, tries + 1), 1000);
+        } else if (stateEl) {
+          stateEl.textContent = '封面加载失败';
+        }
+      }
+    }
+
+    // 每次打开都强制刷新元数据，避免使用即将过期的签名 URL。
+    async function openVideoLightbox(content) {
+      closeImageLightbox();
+      const box = document.getElementById('video-lightbox');
+      const video = document.getElementById('lightbox-video');
+      const caption = document.getElementById('video-lightbox-caption');
+      box.classList.add('show');
+      video.pause();
+      video.removeAttribute('src');
+      video.removeAttribute('poster');
+      video.load();
+      caption.textContent = content.caption || '';
+      try {
+        const meta = await loadMediaMetadata(content.media_id, true);
+        if (meta.status !== 'ready') {
+          caption.textContent = meta.status === 'failed'
+            ? '视频处理失败'
+            : '视频仍在处理中，请稍后再试';
+          return;
+        }
+        const poster = pickVariant(meta, ['poster']);
+        if (poster && poster.url) video.poster = poster.url;
+        const original = meta.original && meta.original.url;
+        if (!original) {
+          caption.textContent = '没有可用的视频地址';
+          return;
+        }
+        video.src = original;
+        video.load();
+        video.play().catch(() => {});
+      } catch (e) {
+        caption.textContent = '视频加载失败: ' + (e.message || e);
+      }
+    }
+
+    function closeVideoLightbox() {
+      const box = document.getElementById('video-lightbox');
+      const video = document.getElementById('lightbox-video');
+      if (!box || !video) return;
+      box.classList.remove('show');
+      video.pause();
+      video.removeAttribute('src');
+      video.removeAttribute('poster');
+      video.load();
+      const caption = document.getElementById('video-lightbox-caption');
+      if (caption) caption.textContent = '';
+    }
+
+    function setUploadStatus(text) {
+      const el = document.getElementById('upload-status');
+      if (!el) return;
+      if (!text) {
+        el.style.display = 'none';
+        el.textContent = '';
+      } else {
+        el.style.display = 'block';
+        el.textContent = text;
+      }
+    }
+
+    function guessImageMime(file) {
+      if (file.type === 'image/jpeg' || file.type === 'image/png' ||
+          file.type === 'image/webp') {
+        return file.type;
+      }
+      const name = (file.name || '').toLowerCase();
+      if (name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'image/jpeg';
+      if (name.endsWith('.png')) return 'image/png';
+      if (name.endsWith('.webp')) return 'image/webp';
+      return '';
+    }
+
+    function guessVideoMime(file) {
+      if (file.type === 'video/mp4' || file.type === 'video/webm') {
+        return file.type;
+      }
+      const name = (file.name || '').toLowerCase();
+      if (name.endsWith('.mp4')) return 'video/mp4';
+      if (name.endsWith('.webm')) return 'video/webm';
+      return '';
+    }
+
+    // XHR 而不是 fetch：需要上传进度；PUT 直传 MinIO，不带业务 Authorization。
+    function uploadFileWithProgress(url, file, contentType, onProgress, timeoutMs) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', url, true);
+        xhr.timeout = timeoutMs || 60000;
+        xhr.setRequestHeader('Content-Type', contentType);
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable && onProgress) {
+            onProgress(Math.round(e.loaded * 100 / e.total));
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else reject(new Error('直传失败 HTTP ' + xhr.status));
+        };
+        xhr.onerror = () => reject(new Error('直传网络错误，请检查 MinIO 与 CORS'));
+        xhr.ontimeout = () => reject(new Error('直传超时'));
+        xhr.send(file);
+      });
+    }
+
+    // 上传期间锁住加号与已启用的附件入口，避免并发上传互相覆盖状态提示。
+    function setAttachmentBusy(busy) {
+      ['plus-btn', 'attach-image', 'attach-video', 'attach-file'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = busy;
+      });
+    }
+
+    // 浏览器给不出类型时退化为通用二进制，服务端仍会校验格式。
+    function guessFileMime(file) {
+      const mime = (file.type || '').trim();
+      if (mime && mime.includes('/') && mime.length <= 128 &&
+          !/[\s"\\]/.test(mime)) {
+        return mime;
+      }
+      return 'application/octet-stream';
+    }
+
+    // 图片/视频/文件共用的直传流程：init -> PUT MinIO -> complete -> 等 ready。
+    // 返回 media_id 与最新元数据（文件在 complete 时已同步 ready）。
+    async function uploadMediaAsset(file, kind, mime, label, options) {
+      const opts = options || {};
+      setUploadStatus('上传中 0%');
+      const initResp = await fetch(logicBase + '/api/media/upload/init', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          kind: kind,
+          mime_type: mime,
+          size_bytes: file.size,
+          filename: file.name ||
+            (kind === 'image' ? 'upload' : (kind === 'video' ? 'video' : 'file.bin'))
+        })
+      });
+      const initBody = await initResp.json();
+      if (!initResp.ok || initBody.code !== 0) {
+        throw new Error(initBody.message || ('初始化失败 HTTP ' + initResp.status));
+      }
+      const mediaId = initBody.data.media_id;
+      await uploadFileWithProgress(
+        initBody.data.upload_url, file, mime,
+        pct => setUploadStatus('上传中 ' + pct + '%'),
+        opts.timeoutMs || 60000
+      );
+
+      setUploadStatus(
+        kind === 'file' ? '确认上传...'
+          : (kind === 'video' ? '服务端处理视频（必要时转码）...'
+                              : '服务端处理中...')
+      );
+      const doneResp = await fetch(logicBase + '/api/media/upload/complete', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ media_id: mediaId })
+      });
+      const doneBody = await doneResp.json();
+      if (!doneResp.ok || doneBody.code !== 0) {
+        throw new Error(doneBody.message || ('确认上传失败 HTTP ' + doneResp.status));
+      }
+
+      let meta = null;
+      const pollMax = opts.pollAttempts || 60;
+      for (let i = 0; i < pollMax; ++i) {
+        meta = await loadMediaMetadata(mediaId, true);
+        if (meta.status === 'ready') break;
+        if (meta.status === 'failed') {
+          throw new Error(meta.error || (label + '处理失败'));
+        }
+        await sleep(500);
+      }
+      if (!meta || meta.status !== 'ready') {
+        throw new Error(label + '处理超时');
+      }
+      return { mediaId, meta };
+    }
+
+    async function sendImageFile(file) {
+      if (!file) return;
+      if (!currentPeerId) {
+        alert('请先选择聊天对象');
+        return;
+      }
+      if (!token) {
+        appendSystemMsg('登录状态已失效，请重新登录');
+        return;
+      }
+      if (uploadingMedia) return;
+      const mime = guessImageMime(file);
+      if (!mime) {
+        alert('只支持 JPEG / PNG / WebP 图片');
+        return;
+      }
+      if (file.size <= 0 || file.size > MAX_IMAGE_BYTES) {
+        alert('图片大小必须在 20 MiB 以内');
+        return;
+      }
+      const caption = document.getElementById('msg-text').value.trim();
+      if (Array.from(caption).length > 500) {
+        alert('图片说明不能超过 500 字');
+        return;
+      }
+
+      uploadingMedia = true;
+      setAttachPanel(false);
+      setAttachmentBusy(true);
+      const input = document.getElementById('image-file');
+      try {
+        const { mediaId, meta } =
+          await uploadMediaAsset(file, 'image', mime, '图片');
+
+        setUploadStatus('发送中...');
+        const sendResp = await fetch(logicBase + '/api/message/send', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({
+            to_user_id: Number(currentPeerId),
+            msg_type: 'image',
+            media_id: mediaId,
+            caption: caption
+          })
+        });
+        const sendBody = await sendResp.json();
+        if (!sendResp.ok || sendBody.code !== 0) {
+          throw new Error(sendBody.message || ('发送失败 HTTP ' + sendResp.status));
+        }
+
+        appendMsgRow({
+          type: 'image',
+          media_id: mediaId,
+          width: meta.width,
+          height: meta.height,
+          dominant_color: meta.dominant_color,
+          caption: caption
+        }, true, currentUserId);
+        document.getElementById('msg-text').value = '';
+      } catch (e) {
+        appendSystemMsg('图片发送失败: ' + (e && e.message ? e.message : e));
+      } finally {
+        uploadingMedia = false;
+        setAttachmentBusy(false);
+        if (input) input.value = '';
+        setUploadStatus('');
+      }
+    }
+
+    // 视频：直传 MinIO；worker 只探测元数据 + 抽封面，不转码。
+    async function sendVideoFile(file) {
+      if (!file) return;
+      if (!currentPeerId) {
+        alert('请先选择聊天对象');
+        return;
+      }
+      if (!token) {
+        appendSystemMsg('登录状态已失效，请重新登录');
+        return;
+      }
+      if (uploadingMedia) return;
+      const mime = guessVideoMime(file);
+      if (!mime) {
+        alert('只支持 MP4 / WebM 视频');
+        return;
+      }
+      if (file.size <= 0 || file.size > MAX_VIDEO_BYTES) {
+        alert('视频大小必须在 100 MiB 以内');
+        return;
+      }
+      const caption = document.getElementById('msg-text').value.trim();
+      if (Array.from(caption).length > 500) {
+        alert('视频说明不能超过 500 字');
+        return;
+      }
+
+      uploadingMedia = true;
+      setAttachPanel(false);
+      setAttachmentBusy(true);
+      const input = document.getElementById('video-file');
+      try {
+        const { mediaId, meta } = await uploadMediaAsset(
+          file, 'video', mime, '视频',
+          { timeoutMs: 840000, pollAttempts: 1200 }
+        );
+
+        setUploadStatus('发送中...');
+        const sendResp = await fetch(logicBase + '/api/message/send', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({
+            to_user_id: Number(currentPeerId),
+            msg_type: 'video',
+            media_id: mediaId,
+            caption: caption
+          })
+        });
+        const sendBody = await sendResp.json();
+        if (!sendResp.ok || sendBody.code !== 0) {
+          throw new Error(sendBody.message || ('发送失败 HTTP ' + sendResp.status));
+        }
+
+        appendMsgRow({
+          type: 'video',
+          media_id: mediaId,
+          width: meta.width,
+          height: meta.height,
+          duration_ms: meta.duration_ms,
+          mime_type: meta.mime_type || mime,
+          size_bytes: meta.size_bytes || file.size,
+          caption: caption
+        }, true, currentUserId);
+        document.getElementById('msg-text').value = '';
+      } catch (e) {
+        appendSystemMsg('视频发送失败: ' + (e && e.message ? e.message : e));
+      } finally {
+        uploadingMedia = false;
+        setAttachmentBusy(false);
+        if (input) input.value = '';
+        setUploadStatus('');
+      }
+    }
+
+    // 普通文件：走同一套 MinIO 直传；服务端不转码，complete 后立即 ready。
+    async function sendGenericFile(file) {
+      if (!file) return;
+      if (!currentPeerId) {
+        alert('请先选择聊天对象');
+        return;
+      }
+      if (!token) {
+        appendSystemMsg('登录状态已失效，请重新登录');
+        return;
+      }
+      if (uploadingMedia) return;
+      if (file.size <= 0 || file.size > MAX_FILE_BYTES) {
+        alert('文件大小必须在 50 MiB 以内');
+        return;
+      }
+      const caption = document.getElementById('msg-text').value.trim();
+      if (Array.from(caption).length > 500) {
+        alert('文件说明不能超过 500 字');
+        return;
+      }
+      const mime = guessFileMime(file);
+
+      uploadingMedia = true;
+      setAttachPanel(false);
+      setAttachmentBusy(true);
+      const input = document.getElementById('generic-file');
+      try {
+        const { mediaId, meta } =
+          await uploadMediaAsset(file, 'file', mime, '文件');
+
+        setUploadStatus('发送中...');
+        const sendResp = await fetch(logicBase + '/api/message/send', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({
+            to_user_id: Number(currentPeerId),
+            msg_type: 'file',
+            media_id: mediaId,
+            caption: caption
+          })
+        });
+        const sendBody = await sendResp.json();
+        if (!sendResp.ok || sendBody.code !== 0) {
+          throw new Error(sendBody.message || ('发送失败 HTTP ' + sendResp.status));
+        }
+
+        appendMsgRow({
+          type: 'file',
+          media_id: mediaId,
+          name: meta.original_name || file.name || 'file.bin',
+          mime_type: meta.mime_type || mime,
+          size_bytes: meta.size_bytes || file.size,
+          caption: caption
+        }, true, currentUserId);
+        document.getElementById('msg-text').value = '';
+      } catch (e) {
+        appendSystemMsg('文件发送失败: ' + (e && e.message ? e.message : e));
+      } finally {
+        uploadingMedia = false;
+        setAttachmentBusy(false);
+        if (input) input.value = '';
+        setUploadStatus('');
+      }
+    }
+
+    // --- 资料与角标 ---
+    async function refreshMyProfile() {
+      if (!currentUserId || !token) return;
+      try {
+        const profile = await apiPost('/api/user/profile', {});
+        myProfile = profile;
+        UserProfile.prime(profile);
+        const displayName = profile.name || ('User ' + currentUserId);
+        document.getElementById('my-user-id').textContent =
+          displayName + ' · ID ' + currentUserId;
+        UserProfile.applyAvatar(
+          document.getElementById('my-avatar'), profile, currentUserId);
+        // 刷新本地缓存的昵称，供其他页面首屏使用。
+        Auth.set(currentUserId, token, displayName);
+      } catch (e) {
+        console.warn('load my profile failed', e);
+      }
+    }
+
+    async function refreshGlobalUnread() {
+      if (!currentUserId) return;
+      try {
+        const data = await apiPost('/api/session/unread_summary', {});
+        setUnreadBadge(document.getElementById('global-unread'), data.total);
+      } catch (e) {
+        console.warn('load unread summary failed', e);
+      }
+      try {
+        const pending = await apiPost('/api/friend/pending_count', {});
+        setUnreadBadge(document.getElementById('friend-pending-badge'),
+                       pending.pending_count);
+      } catch (e) {
+        console.warn('load pending count failed', e);
+      }
+    }
+
+    function startNavPolling() {
+      stopNavPolling();
+      if (!currentUserId) return;
+      refreshGlobalUnread();
+      navPollTimer = setInterval(() => {
+        refreshGlobalUnread();
+        loadSingleSessionList();
+      }, 30000);
+    }
+
+    function stopNavPolling() {
+      if (navPollTimer) {
+        clearInterval(navPollTimer);
+        navPollTimer = null;
+      }
+    }
 
     // --- 界面切换逻辑 ---
     function updateUIState() {
@@ -460,10 +1019,16 @@
         // 已登录
         authPanel.classList.add('hidden');
         navPanel.classList.remove('hidden');
-        document.getElementById('my-user-id').textContent = 'ID: ' + currentUserId;
+        const authNow = Auth.get();
+        document.getElementById('my-user-id').textContent =
+          (myProfile && myProfile.name) || (authNow && authNow.name) ||
+          ('User ' + currentUserId);
+        refreshMyProfile();
         loadSingleSessionList(); // 自动刷新列表
+        startNavPolling();
       } else {
         // 未登录
+        stopNavPolling();
         authPanel.classList.remove('hidden');
         navPanel.classList.add('hidden');
         emptyState.classList.remove('hidden');
@@ -477,10 +1042,12 @@
       if (wsRetryTimer) { clearTimeout(wsRetryTimer); wsRetryTimer = null; }
       wsRetryCount = 0;
       if (ws) ws.close();
+      stopNavPolling();
       currentUserId = null;
       token = null;
       currentSessionId = null;
       currentPeerId = null;
+      myProfile = null;
       ws = null;
       document.getElementById('messages').innerHTML = '';
       updateUIState();
@@ -498,13 +1065,22 @@
       document.getElementById('empty-state').classList.add('hidden');
       document.getElementById('chat-window').classList.remove('hidden');
       
-      document.getElementById('chat-title').textContent = '与用户 ' + peerId + ' 聊天中';
+      const chatTitle = document.getElementById('chat-title');
+      const chatAvatar = document.getElementById('chat-peer-avatar');
+      chatTitle.textContent = '与 User ' + peerId + ' 聊天中';
+      UserProfile.applyAvatar(chatAvatar, null, peerId);
+      UserProfile.get(peerId).then(profile => {
+        if (currentPeerId !== Number(peerId)) return;
+        chatTitle.textContent =
+          '与 ' + UserProfile.displayName(profile, peerId) + ' 聊天中';
+        UserProfile.applyAvatar(chatAvatar, profile, peerId);
+      }).catch(() => {});
       document.getElementById('session-id-disp').textContent = sessionId;
-      
+
       // 清空当前消息框并加载历史（首次）
       document.getElementById('messages').innerHTML = '';
       loadHistory(true);
-      
+
       // 刷新未读数
       refreshUnread();
       
@@ -524,29 +1100,157 @@
       
       const row = document.createElement('div');
       row.className = 'msg-row ' + (isMe ? 'me' : 'other');
-      
+
+      const numericSender = Number(senderId) ||
+        (isMe ? Number(currentUserId) : 0);
+      const senderProfile = opts.sender || null;
+      if (senderProfile && senderProfile.user_id) {
+        UserProfile.prime(senderProfile);
+      }
+      const profileHint = senderProfile || (isMe ? myProfile : null);
+      const authNow = Auth.get();
+      const fallbackName = isMe
+        ? ((profileHint && profileHint.name) ||
+           (authNow && authNow.name) || '我')
+        : ('User ' + (numericSender || '?'));
+
       // 头像
       const avatar = document.createElement('div');
       avatar.className = 'msg-avatar';
-      avatar.textContent = isMe ? 'Me' : 'Ta';
-      if (isMe) avatar.style.background = '#4caf50';
-      
+      UserProfile.applyAvatar(avatar, profileHint, numericSender);
+
       // 内容包裹
       const wrapper = document.createElement('div');
       wrapper.className = 'msg-content-wrapper';
-      
+
       // 名字 + 时间
       const name = document.createElement('div');
       name.className = 'msg-name';
+      const nameText = document.createElement('span');
+      nameText.textContent = (profileHint && profileHint.name) || fallbackName;
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'msg-time';
       // 如果没有传入时间，就用当前时间
-      const displayTime = timeStr || new Date().toLocaleTimeString();
-      name.innerHTML = `<span>${senderId || (isMe ? currentUserId : '未知')}</span> <span style="font-weight:normal;margin-left:5px;">${displayTime}</span>`;
+      timeSpan.textContent = timeStr || new Date().toLocaleTimeString();
+      name.appendChild(nameText);
+      name.appendChild(timeSpan);
+      if (!profileHint && numericSender) {
+        UserProfile.hydrate(avatar, numericSender, nameText, fallbackName);
+      }
       
       // 气泡
       const bubble = document.createElement('div');
       bubble.className = 'msg-bubble';
-      bubble.textContent = text;
-      
+      const imageContent = extractImageContent(text);
+      const videoContent = imageContent ? null : extractVideoContent(text);
+      const fileContent =
+        (imageContent || videoContent) ? null : extractFileContent(text);
+      // 图片/视频气泡要等 row 挂到 DOM 后再 hydrate：hydrate 函数开头会检查
+      // img.isConnected，提前调用会被直接 return，导致封面永远不加载。
+      let pendingImage = null;
+      let pendingVideo = null;
+      if (imageContent) {
+        bubble.classList.add('msg-image-bubble');
+        const frame = document.createElement('div');
+        frame.className = 'msg-image-frame';
+        if (imageContent.dominant_color) {
+          frame.style.background = imageContent.dominant_color;
+        }
+        const img = document.createElement('img');
+        img.className = 'msg-image-preview';
+        img.alt = imageContent.caption || '图片';
+        if (imageContent.width && imageContent.height) {
+          img.style.aspectRatio =
+            imageContent.width + ' / ' + imageContent.height;
+        }
+        const state = document.createElement('div');
+        state.className = 'msg-image-state';
+        state.textContent = '加载中...';
+        frame.appendChild(img);
+        frame.appendChild(state);
+        frame.onclick = () => openImageLightbox(imageContent);
+        bubble.appendChild(frame);
+        if (imageContent.caption) {
+          const caption = document.createElement('div');
+          caption.className = 'msg-image-caption';
+          caption.textContent = imageContent.caption;
+          bubble.appendChild(caption);
+        }
+        pendingImage = { img, state, content: imageContent };
+      } else if (videoContent) {
+        bubble.classList.add('msg-video-bubble');
+        const card = document.createElement('div');
+        card.className = 'msg-video-card';
+        if (videoContent.width && videoContent.height) {
+          card.style.aspectRatio =
+            videoContent.width + ' / ' + videoContent.height;
+        }
+        const poster = document.createElement('img');
+        poster.className = 'msg-video-poster';
+        poster.alt = videoContent.caption || '视频';
+        const state = document.createElement('div');
+        state.className = 'msg-video-state';
+        state.textContent = '加载中...';
+        const play = document.createElement('div');
+        play.className = 'msg-video-play';
+        play.innerHTML =
+          '<svg class="mr-icon" aria-hidden="true"><use href="#i-play"></use></svg>';
+        const duration = document.createElement('div');
+        duration.className = 'msg-video-duration';
+        duration.textContent = formatDuration(videoContent.duration_ms);
+        card.appendChild(poster);
+        card.appendChild(state);
+        card.appendChild(play);
+        card.appendChild(duration);
+        card.onclick = () => openVideoLightbox(videoContent);
+        bubble.appendChild(card);
+        if (videoContent.caption) {
+          const caption = document.createElement('div');
+          caption.className = 'msg-video-caption';
+          caption.textContent = videoContent.caption;
+          bubble.appendChild(caption);
+        }
+        pendingVideo = { img: poster, state, content: videoContent };
+      } else if (fileContent) {
+        bubble.classList.add('msg-file-bubble');
+        const card = document.createElement('div');
+        card.className = 'msg-file-card';
+
+        const icon = document.createElement('div');
+        icon.className = 'msg-file-icon';
+        icon.textContent = fileExtension(fileContent.name);
+        icon.style.background =
+          fileIconColor(fileContent.name, fileContent.mime_type);
+
+        const info = document.createElement('div');
+        info.className = 'msg-file-info';
+        const nameEl = document.createElement('div');
+        nameEl.className = 'msg-file-name';
+        nameEl.textContent = fileContent.name || '未命名文件';
+        nameEl.title = fileContent.name || '';
+        const metaEl = document.createElement('div');
+        metaEl.className = 'msg-file-meta';
+        const sizeText = fileContent.size_bytes
+          ? formatBytes(fileContent.size_bytes) + ' · ' : '';
+        metaEl.textContent = sizeText + '点击下载';
+
+        info.appendChild(nameEl);
+        info.appendChild(metaEl);
+        card.appendChild(icon);
+        card.appendChild(info);
+        bubble.appendChild(card);
+        if (fileContent.caption) {
+          const caption = document.createElement('div');
+          caption.className = 'msg-file-caption';
+          caption.textContent = fileContent.caption;
+          bubble.appendChild(caption);
+        }
+        bubble.title = '下载 ' + (fileContent.name || '文件');
+        bubble.onclick = () => downloadFileMessage(fileContent);
+      } else {
+        bubble.textContent = typeof text === 'string' ? text : String(text);
+      }
+
       wrapper.appendChild(name);
       wrapper.appendChild(bubble);
       
@@ -557,6 +1261,13 @@
         msgsDiv.insertBefore(row, msgsDiv.firstChild);
       } else {
         msgsDiv.appendChild(row);
+      }
+
+      if (pendingImage) {
+        hydrateImageBubble(pendingImage.img, pendingImage.content, pendingImage.state, 0);
+      }
+      if (pendingVideo) {
+        hydrateVideoPoster(pendingVideo.content, pendingVideo.img, pendingVideo.state, 0);
       }
 
       if (!prepend && !keepScroll) {
@@ -615,8 +1326,9 @@
         // 成功
         currentUserId = data.data.user_id;
         token = data.data.token;
-        // 缓存本地
-        Auth.set(currentUserId, token, body.name || ('User ' + currentUserId));
+        // 缓存本地：登录响应已经带回数据库里的当前昵称。
+        Auth.set(currentUserId, token,
+                 data.data.name || body.name || ('User ' + currentUserId));
         
         statusEl.textContent = '';
         
@@ -665,15 +1377,9 @@
              // 收到单聊消息
              // const sender = obj.sender_id; // 假设后端下发 sender_id
              
-             let senderDisplayName = '未知用户';
-             if (obj.sender && obj.sender.name) {
-                senderDisplayName = obj.sender.name;
-             } else if (obj.sender_id) {
-                senderDisplayName = 'User ' + obj.sender_id;
-             } else if (obj.from_user_id) {
-                senderDisplayName = 'User ' + obj.from_user_id;
-             }
-
+             const imageContent = extractImageContent(obj.content);
+             const videoContent = extractVideoContent(obj.content);
+             const fileContent = extractFileContent(obj.content);
              const t = getMsgText(obj);
              console.log('obj', obj);
              
@@ -702,16 +1408,25 @@
 
              if (!belongsToCurrentSession) {
                if (senderId) {
-                 showToast('收到 User ' + senderId + ' 的新消息: ' + t);
+                 UserProfile.get(senderId).then(profile => {
+                   showToast('收到 ' + UserProfile.displayName(profile, senderId) +
+                             ' 的新消息: ' + t);
+                 }).catch(() => {
+                   showToast('收到 User ' + senderId + ' 的新消息: ' + t);
+                 });
                }
                loadSingleSessionList();
+               refreshGlobalUnread();
                setTimeout(loadSingleSessionList, 500);
                setTimeout(loadSingleSessionList, 1500);
                return;
              }
 
              const isMe = senderId === Number(currentUserId);
-             appendMsgRow(t, isMe, senderDisplayName, timeStr);
+             appendMsgRow(videoContent || imageContent || fileContent || t,
+                          isMe, senderId, timeStr, { sender: obj.sender });
+             // 正在看这个会话：收到即视为已读。
+             if (!isMe) markCurrentSessionRead();
           } else if (obj.type === 'system_broadcast') {
              // 处理系统广播
              // scope: "all" 为全局推送；scope: "group" 为房间/群推送
@@ -727,7 +1442,7 @@
              else if (typeof obj.content === 'string') text = obj.content;
              else text = JSON.stringify(obj.content);
              
-             showToast('📢 全员广播: ' + text);
+             showToast('全员广播: ' + text);
              
              // 同时如果打开了聊天窗口，也显示一条系统消息
              if (currentSessionId) {
@@ -826,23 +1541,58 @@
       const container = document.getElementById('session-list');
       container.innerHTML = '';
       if (list.length === 0) {
-        container.innerHTML = '<div style="text-align:center;color:#999;font-size:12px;margin-top:20px;">暂无历史会话</div>';
+        container.innerHTML =
+          '<div class="session-empty">暂无历史会话<br>请在上方输入 UserID 或昵称</div>';
         return;
       }
-      
+
       list.forEach(s => {
         const div = document.createElement('div');
         div.className = 'session-item';
         if (s.session_id === currentSessionId) div.classList.add('active');
         div.dataset.sid = s.session_id;
-        
-        div.innerHTML = `
-          <div class="avatar-placeholder" style="background:#90caf9;">${s.peer_user_id}</div>
-          <div class="session-info">
-             <div class="session-name">用户 ${s.peer_user_id}</div>
-             <div class="session-preview">会话 ID: ${s.session_id}</div>
-          </div>
-        `;
+
+        const peerProfile = {
+          user_id: s.peer_user_id,
+          name: s.peer_name || '',
+          avatar_media_id: s.peer_avatar_media_id || '',
+          avatar_url: s.peer_avatar_url || '',
+          avatar_expires_at: s.peer_avatar_expires_at || 0
+        };
+        if (peerProfile.name || peerProfile.avatar_url ||
+            peerProfile.avatar_media_id) {
+          UserProfile.prime(peerProfile);
+        }
+
+        const avatar = document.createElement('div');
+        avatar.className = 'avatar-placeholder';
+        UserProfile.applyAvatar(avatar, peerProfile, s.peer_user_id);
+
+        const info = document.createElement('div');
+        info.className = 'session-info';
+        const nameEl = document.createElement('div');
+        nameEl.className = 'session-name';
+        const fallbackName = 'User ' + s.peer_user_id;
+        nameEl.textContent = peerProfile.name || fallbackName;
+        if (!peerProfile.name && !peerProfile.avatar_media_id) {
+          UserProfile.hydrate(avatar, s.peer_user_id, nameEl, fallbackName);
+        }
+        const preview = document.createElement('div');
+        preview.className = 'session-preview';
+        preview.textContent = 'ID ' + s.peer_user_id;
+        info.appendChild(nameEl);
+        info.appendChild(preview);
+
+        const meta = document.createElement('div');
+        meta.className = 'session-meta';
+        const badge = document.createElement('span');
+        badge.className = 'unread-badge';
+        setUnreadBadge(badge, s.unread);
+        meta.appendChild(badge);
+
+        div.appendChild(avatar);
+        div.appendChild(info);
+        div.appendChild(meta);
         div.onclick = () => {
           showChatWindow(s.peer_user_id, s.session_id);
         };
@@ -888,7 +1638,10 @@
 
          const msgs = data.data.messages || [];
          if (msgs.length === 0) {
-           if (isInitial) appendSystemMsg('暂无历史消息');
+           if (isInitial) {
+             appendSystemMsg('暂无历史消息');
+             markCurrentSessionRead();
+           }
            historyHasMore = false;
            historyLoading = false;
            return;
@@ -910,22 +1663,22 @@
            lastHistorySeq = Math.max(lastHistorySeq, m.msg_seq || 0);
            const isMe = (m.sender_id === currentUserId);
            const text = getMsgText(m);
-           
-           // 尝试解析 sender name
-           let displayName = 'User ' + m.sender_id;
-           try {
-              const contentObj = (typeof m.content === 'string') ? JSON.parse(m.content) : m.content;
-              if (contentObj && contentObj.sender && contentObj.sender.name) {
-                 displayName = contentObj.sender.name;
-              }
-           } catch(e){}
+           const imageContent = extractImageContent(m.content);
+           const videoContent = extractVideoContent(m.content);
+           const fileContent = extractFileContent(m.content);
+           const renderContent =
+             videoContent || imageContent || fileContent || text;
 
            const timeStr = m.timestamp_ms ? new Date(m.timestamp_ms).toLocaleTimeString() : '';
-           
+           const sender = m.sender || null;
+           if (sender && sender.user_id) UserProfile.prime(sender);
+
            if (isInitial) {
-             appendMsgRow(text, isMe, displayName, timeStr);
+             appendMsgRow(renderContent, isMe, m.sender_id, timeStr,
+                          { sender });
            } else {
-             appendMsgRow(text, isMe, displayName, timeStr, { prepend: true, keepScroll: true });
+             appendMsgRow(renderContent, isMe, m.sender_id, timeStr,
+                          { prepend: true, keepScroll: true, sender });
            }
          });
 
@@ -939,6 +1692,9 @@
          if (!isInitial) {
            const newScrollHeight = container.scrollHeight;
            container.scrollTop = newScrollHeight - oldScrollHeight;
+         } else {
+           // 打开会话即自动已读，避免用户在看消息时角标还挂着。
+           markCurrentSessionRead();
          }
        } catch(e) {
          appendSystemMsg('加载历史失败: ' + e);
@@ -983,6 +1739,18 @@
     // 辅助：解析消息内容
     function getMsgText(obj) {
        if (!obj.content) return '[空]';
+       const imageContent = extractImageContent(obj.content);
+       if (imageContent) {
+         return imageContent.caption ? '[图片] ' + imageContent.caption : '[图片]';
+       }
+       const videoContent = extractVideoContent(obj.content);
+       if (videoContent) {
+         return '[视频] ' + (videoContent.caption || '');
+       }
+       const fileContent = extractFileContent(obj.content);
+       if (fileContent) {
+         return '[文件] ' + (fileContent.name || '未命名文件');
+       }
        try {
          // 兼容 content 是 string 或 object
          const c = (typeof obj.content === 'string') ? JSON.parse(obj.content) : obj.content;
@@ -1004,16 +1772,46 @@
        }
     }
     
-    // 辅助：刷新未读 / 标记已读 (简化版)
+    // 刷新当前会话未读数（只读，不改变读游标）。
     async function refreshUnread() {
-      if(!currentSessionId) return;
-      // fetch logicBase + '/api/session/unread' ...
-      // 更新 document.getElementById('unread-count')
+      if (!currentSessionId) return;
+      try {
+        const data = await apiPost('/api/session/unread',
+                                   { session_id: currentSessionId });
+        const count = Number(data.unread) || 0;
+        document.getElementById('unread-count').textContent = String(count);
+        const seq = Number(data.last_msg_seq) || 0;
+        if (seq > 0) lastHistorySeq = Math.max(lastHistorySeq, seq);
+      } catch (e) {
+        console.warn('refresh unread failed', e);
+      }
     }
+
+    // 把当前会话的读游标推进到最新一条；服务端会做单调保护。
+    async function markCurrentSessionRead() {
+      if (!currentSessionId) return;
+      const sid = currentSessionId;
+      try {
+        const data = await apiPost('/api/session/unread', { session_id: sid });
+        const seq = Number(data.last_msg_seq) || 0;
+        if (seq > 0) {
+          await apiPost('/api/session/mark_read',
+                        { session_id: sid, read_seq: seq });
+        }
+        if (currentSessionId === sid) {
+          document.getElementById('unread-count').textContent = '0';
+        }
+        loadSingleSessionList();
+        refreshGlobalUnread();
+      } catch (e) {
+        console.warn('mark session read failed', e);
+      }
+    }
+
     document.getElementById('mark-read-btn').onclick = async () => {
-      if(!currentSessionId || !lastHistorySeq) return;
-       // fetch logicBase + '/api/session/mark_read' ...
-       appendSystemMsg('已标记已读');
+      if (!currentSessionId) return;
+      await markCurrentSessionRead();
+      appendSystemMsg('已标记已读');
     };
 
     // 辅助：显示 Toast
@@ -1064,17 +1862,132 @@
        }
     };
 
-    document.getElementById('start-chat-btn').onclick = () => {
-       const peer = document.getElementById('to-user').value.trim();
-       if(!peer) return alert('请输入对方ID');
-       if(!currentUserId) return alert('请先登录');
-       const sid = buildSingleSessionId(currentUserId, peer);
-       showChatWindow(peer, sid);
+    // 通过服务端鉴权后打开单聊（会校验用户存在且双方是好友）。
+    async function openSingleChat(peerId) {
+      const data = await apiPost('/api/session/open_single',
+                                 { peer_user_id: Number(peerId) });
+      if (data.peer && data.peer.user_id) UserProfile.prime(data.peer);
+      await loadSingleSessionList();
+      showChatWindow(
+        data.peer && data.peer.user_id ? data.peer.user_id : Number(peerId),
+        data.session_id);
+    }
+
+    document.getElementById('start-chat-btn').onclick = async () => {
+      const keyword = document.getElementById('to-user').value.trim();
+      if (!keyword) return alert('请输入 UserID 或昵称');
+      if (!currentUserId) return alert('请先登录');
+
+      if (!/^\d+$/.test(keyword)) {
+        // 昵称可能重名：统一进入联系人页，列出所有同名用户供选择。
+        window.location.href =
+          'contacts.html?search=' + encodeURIComponent(keyword);
+        return;
+      }
+
+      try {
+        // 纯数字也先查库，确认用户存在再打开会话。
+        const data = await apiPost('/api/user/search', { keyword });
+        const users = data.users || [];
+        if (users.length === 0) {
+          alert('用户不存在: ' + keyword);
+          return;
+        }
+        const user = users[0];
+        if (user.relationship === 'self') {
+          alert('不能和自己聊天');
+          return;
+        }
+        if (user.relationship === 'friend') {
+          await openSingleChat(user.user_id);
+          return;
+        }
+        // 还不是好友：去联系人页发送好友申请。
+        window.location.href =
+          'contacts.html?search=' + encodeURIComponent(keyword);
+      } catch (e) {
+        alert('查询用户失败: ' + (e && e.message ? e.message : e));
+      }
     };
-    
-    document.getElementById('refresh-sessions-btn').onclick = loadSingleSessionList;
+
+    document.getElementById('refresh-sessions-btn').onclick = () => {
+      loadSingleSessionList();
+      refreshGlobalUnread();
+    };
     document.getElementById('send-btn').onclick = sendMsg;
     document.getElementById('msg-text').onkeydown = (e) => { if(e.key==='Enter') sendMsg(); };
+
+    // 附件菜单：加号展开，支持图片/视频/文件。
+    const plusBtn = document.getElementById('plus-btn');
+    const attachPanel = document.getElementById('attach-panel');
+    const imageFileInput = document.getElementById('image-file');
+    const imageOption = document.getElementById('attach-image');
+    const videoFileInput = document.getElementById('video-file');
+    const videoOption = document.getElementById('attach-video');
+    const genericFileInput = document.getElementById('generic-file');
+    const fileOption = document.getElementById('attach-file');
+
+    function setAttachPanel(open) {
+      attachPanel.classList.toggle('hidden', !open);
+      plusBtn.classList.toggle('open', open);
+      plusBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    plusBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (plusBtn.disabled) return;
+      setAttachPanel(attachPanel.classList.contains('hidden'));
+    };
+    imageOption.onclick = () => {
+      if (imageOption.disabled) return;
+      setAttachPanel(false);
+      imageFileInput.click();
+    };
+    imageFileInput.onchange = (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (file) sendImageFile(file);
+    };
+    videoOption.onclick = () => {
+      if (videoOption.disabled) return;
+      setAttachPanel(false);
+      videoFileInput.click();
+    };
+    videoFileInput.onchange = (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (file) sendVideoFile(file);
+    };
+    fileOption.onclick = () => {
+      if (fileOption.disabled) return;
+      setAttachPanel(false);
+      genericFileInput.click();
+    };
+    genericFileInput.onchange = (e) => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (file) sendGenericFile(file);
+    };
+    document.addEventListener('click', (e) => {
+      if (attachPanel.classList.contains('hidden')) return;
+      if (attachPanel.contains(e.target) || e.target === plusBtn) return;
+      setAttachPanel(false);
+    });
+    document.getElementById('lightbox-close').onclick = closeImageLightbox;
+    document.getElementById('image-lightbox').onclick = (e) => {
+      if (e.target && e.target.id === 'image-lightbox') closeImageLightbox();
+    };
+    document.getElementById('video-lightbox-close').onclick = closeVideoLightbox;
+    document.getElementById('video-lightbox').onclick = (e) => {
+      if (e.target && e.target.id === 'video-lightbox') closeVideoLightbox();
+    };
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        setAttachPanel(false);
+        closeImageLightbox();
+        closeVideoLightbox();
+      }
+    });
 
     // 点击“拉取更多历史”按钮时，向前分页加载
     document.getElementById('load-more-btn').onclick = () => {
@@ -1098,6 +2011,14 @@
       // WebSocket 握手失败后会通过 HTTP 再确认 token，只有明确 401 才清理会话
     }
     updateUIState();
+
+    // 从联系人页跳转过来时直接打开对应单聊。
+    const peerParam = new URLSearchParams(window.location.search).get('peer');
+    if (savedSession && peerParam && /^\d+$/.test(peerParam)) {
+      openSingleChat(peerParam).catch(e => {
+        showToast('打开会话失败: ' + (e && e.message ? e.message : e));
+      });
+    }
   </script>
 </body>
 </html>

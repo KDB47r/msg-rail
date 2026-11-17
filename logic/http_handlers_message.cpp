@@ -4,11 +4,16 @@
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "http_server.h"
 #include "http_server_internal.h"
 #include "logging.h"
+#include "media_dao.h"
+#include "media_id.h"
+#include "model.h"
 #include "proto_enums.h"
 #include "spark_push.pb.h"
 
@@ -17,6 +22,19 @@ namespace sparkpush {
 using HttpRequest = ::sparkpush::net::HttpRequest;
 using HttpResponse = ::sparkpush::net::HttpResponse;
 using namespace detail;
+
+namespace {
+
+// 按 UTF-8 码点计数：一个中文字符算 1 个，而不是 3 个字节。
+size_t Utf8CharCount(const std::string& value) {
+    size_t count = 0;
+    for (unsigned char c : value) {
+        if ((c & 0xC0) != 0x80) ++count;
+    }
+    return count;
+}
+
+}  // namespace
 
 // HTTP 消息发送接口
 // 优化前路径（5-6 次 MySQL）: HTTP → GetOrCreateSession(MySQL) →
@@ -55,21 +73,80 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
     }
 
     int64_t to_user = 0;
+    std::string msg_type = "text";
     std::string content;
+    std::string media_id;
+    std::string caption;
     try {
-        if (!j.contains("to_user_id") || !j.contains("content")) {
-            WriteError(resp, 400, "to_user_id/content required");
+        if (!j.contains("to_user_id")) {
+            WriteError(resp, 400, "to_user_id required");
             return;
         }
         to_user = j.at("to_user_id").get<int64_t>();
-        content = j.at("content").get<std::string>();
+        if (j.contains("msg_type") && j["msg_type"].is_string()) {
+            msg_type = j["msg_type"].get<std::string>();
+        }
+        if (msg_type == "image" || msg_type == "file" ||
+            msg_type == "video") {
+            if (!j.contains("media_id") || !j["media_id"].is_string()) {
+                WriteError(resp, 400,
+                           "media_id required for image/video/file message");
+                return;
+            }
+            media_id = j["media_id"].get<std::string>();
+            if (j.contains("caption") && j["caption"].is_string()) {
+                caption = j["caption"].get<std::string>();
+            }
+        } else if (msg_type == "text") {
+            if (!j.contains("content") || !j["content"].is_string()) {
+                WriteError(resp, 400, "content required for text message");
+                return;
+            }
+            content = j["content"].get<std::string>();
+        } else {
+            WriteError(resp, 400, "unsupported msg_type: " + msg_type);
+            return;
+        }
     } catch (const nlohmann::json::exception& e) {
         WriteError(resp, 400, "invalid json fields in message send");
         return;
     }
 
-    if (to_user <= 0 || content.empty()) {
-        WriteError(resp, 400, "to_user_id/content required");
+    const bool is_image = (msg_type == "image");
+    const bool is_video = (msg_type == "video");
+    const bool is_file = (msg_type == "file");
+    const bool is_media = is_image || is_video || is_file;
+    if (to_user <= 0) {
+        WriteError(resp, 400, "to_user_id required");
+        return;
+    }
+    if (!is_media && content.empty()) {
+        WriteError(resp, 400, "content required");
+        return;
+    }
+    if (is_media && media_id.empty()) {
+        WriteError(resp, 400, "media_id required");
+        return;
+    }
+    if (Utf8CharCount(caption) > 500) {
+        WriteError(resp, 400, "caption exceeds 500 characters");
+        return;
+    }
+
+    // 单聊只允许好友：与 gRPC 上行路径保持同一权限规则。
+    if (!friend_service_) {
+        WriteError(resp, 500, "friend service not initialized");
+        return;
+    }
+    bool is_friend = false;
+    std::string friend_err;
+    if (!friend_service_->AreFriends(from_user, to_user, &is_friend,
+                                     &friend_err)) {
+        WriteError(resp, 500, "check friendship failed: " + friend_err);
+        return;
+    }
+    if (!is_friend) {
+        WriteError(resp, 403, "only friends can send single chat messages");
         return;
     }
 
@@ -85,6 +162,42 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
     std::string session_id =
         "single:" + std::to_string(u1) + ":" + std::to_string(u2);
 
+    // 媒体消息在分配 seq 之前先校验归属和状态，避免无效请求消耗序号。
+    MediaObject media;
+    if (is_media) {
+        if (!media_dao_) {
+            WriteError(resp, 500, "media dao not initialized");
+            return;
+        }
+        if (!IsValidMediaId(media_id)) {
+            WriteError(resp, 400, "invalid media_id");
+            return;
+        }
+        std::string media_err;
+        if (!media_dao_->GetById(media_id, &media, &media_err)) {
+            WriteError(resp, 404, "media not found");
+            return;
+        }
+        if (media.owner_id != from_user) {
+            WriteError(resp, 403, "forbidden: not media owner");
+            return;
+        }
+        if (media.kind != msg_type) {
+            WriteError(resp, 400,
+                       "media kind does not match msg_type: " + media.kind);
+            return;
+        }
+        if (media.status != "ready") {
+            WriteError(resp, 409,
+                       "media is not ready, current status: " + media.status);
+            return;
+        }
+        if (!media.session_id.empty() || !media.message_id.empty()) {
+            WriteError(resp, 409, "media has already been used");
+            return;
+        }
+    }
+
     // 由统一序号分配器获取 msg_seq；新 Redis key 首次使用时会从 MySQL
     // 恢复历史最大值，避免与已持久化消息冲突。
     int64_t msg_seq = 0;
@@ -98,6 +211,24 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
     // 构造 msg_id
     std::string msg_id = session_id + "-" + std::to_string(msg_seq);
 
+    // 先绑定媒体再投 Kafka：否则接收方可能先收到消息、后查询媒体，
+    // 在绑定完成前看到 404。条件 UPDATE 同时保证一个媒体只能发一次。
+    if (is_media) {
+        bool bound = false;
+        std::string bind_err;
+        if (!media_dao_->BindToMessage(media.media_id, from_user, session_id,
+                                       msg_id, &bound, &bind_err)) {
+            LogError("BindToMessage failed for " + media.media_id + ": " +
+                     bind_err);
+            WriteError(resp, 500, "bind media to message failed");
+            return;
+        }
+        if (!bound) {
+            WriteError(resp, 409, "media has already been used");
+            return;
+        }
+    }
+
     int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                          std::chrono::system_clock::now().time_since_epoch())
                          .count();
@@ -109,7 +240,49 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
     push_j["msg_seq"] = msg_seq;
     push_j["from_user_id"] = from_user;
     push_j["to_user_id"] = to_user;
-    push_j["content"] = content;
+    if (is_image) {
+        // 图片消息的 content 是对象；width/height/dominant_color 由服务端
+        // 从 media_object 注入，客户端不能伪造。
+        nlohmann::json image_content;
+        image_content["type"] = "image";
+        image_content["media_id"] = media.media_id;
+        image_content["width"] = media.width;
+        image_content["height"] = media.height;
+        image_content["dominant_color"] = media.dominant_color;
+        image_content["blur_hash"] = media.blur_hash;
+        image_content["mime_type"] = media.mime_type;
+        image_content["size_bytes"] = media.size_bytes;
+        image_content["caption"] = caption;
+        push_j["content"] = std::move(image_content);
+        push_j["msg_type"] = "image";
+    } else if (is_video) {
+        // 视频宽高/时长以服务端 ffprobe 结果为准，客户端不能伪造。
+        nlohmann::json video_content;
+        video_content["type"] = "video";
+        video_content["media_id"] = media.media_id;
+        video_content["width"] = media.width;
+        video_content["height"] = media.height;
+        video_content["duration_ms"] = media.duration_ms;
+        video_content["mime_type"] = media.mime_type;
+        video_content["size_bytes"] = media.size_bytes;
+        video_content["caption"] = caption;
+        push_j["content"] = std::move(video_content);
+        push_j["msg_type"] = "video";
+    } else if (is_file) {
+        // 文件名/大小/MIME 均以服务端 media_object 为准，避免客户端伪造。
+        nlohmann::json file_content;
+        file_content["type"] = "file";
+        file_content["media_id"] = media.media_id;
+        file_content["name"] = media.original_name;
+        file_content["mime_type"] = media.mime_type;
+        file_content["size_bytes"] = media.size_bytes;
+        file_content["caption"] = caption;
+        push_j["content"] = std::move(file_content);
+        push_j["msg_type"] = "file";
+    } else {
+        push_j["content"] = content;
+        push_j["msg_type"] = "text";
+    }
     push_j["create_time"] = now_ms;
     std::string push_json = push_j.dump();
 
@@ -120,6 +293,7 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
     // 构造并发送 PushToCometRequest（带持久化标记）
     // 序列化/投递失败必须反馈给调用方，避免返回“假成功”
     bool deliver_ok = true;
+    int delivered = 0;
     if (has_route && !comets.empty()) {
         for (const auto& comet_id : comets) {
             PushToCometRequest push_req;
@@ -134,7 +308,7 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
             cm->set_msg_seq(msg_seq);
             cm->set_sender_id(from_user);
             cm->set_timestamp_ms(now_ms);
-            cm->set_msg_type(MSG_TYPE_TEXT);
+            cm->set_msg_type(MsgTypeFromString(msg_type));
             cm->set_content_json(push_json);
 
             auto* target = push_req.add_targets();
@@ -148,11 +322,13 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
             } else {
                 // protobuf 对象序列化成字节串，这个字节串就是 Kafka 的 valu
                 const std::string kafka_key = session_id + "|" + comet_id;
-                // *** 
+                // ***
                 if (!kafka_producer_->Send(kafka_key, payload)) {
                     LogError("Kafka send message failed for comet " +
                              comet_id);
                     deliver_ok = false;
+                } else {
+                    ++delivered;
                 }
             }
         }
@@ -170,7 +346,7 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
         cm->set_msg_seq(msg_seq);
         cm->set_sender_id(from_user);
         cm->set_timestamp_ms(now_ms);
-        cm->set_msg_type(MSG_TYPE_TEXT);
+        cm->set_msg_type(MsgTypeFromString(msg_type));
         cm->set_content_json(push_json);
 
         auto* target = push_req.add_targets();
@@ -184,16 +360,32 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
             LogError("Kafka send message failed for persist_only, session " +
                      session_id);
             deliver_ok = false;
+        } else {
+            ++delivered;
         }
     }
 
     if (!deliver_ok) {
+        // 全部投递失败才撤销绑定，允许客户端用同一 media_id 重试。
+        // 只要有一个 Comet 成功，接收方就可能已经看到消息，此时保留绑定。
+        if (is_media && delivered == 0 && media_dao_) {
+            std::string unbind_err;
+            if (!media_dao_->UnbindMessage(media.media_id, from_user, msg_id,
+                                           &unbind_err)) {
+                LogError("UnbindMessage failed for " + media.media_id + ": " +
+                         unbind_err);
+            }
+        }
         WriteError(resp, 500, "send message to kafka failed");
         return;
     }
 
     nlohmann::json data{
         {"session_id", session_id}, {"msg_id", msg_id}, {"msg_seq", msg_seq}};
+    if (is_media) {
+        data["media_id"] = media.media_id;
+        data["msg_type"] = msg_type;
+    }
     WriteJson(resp, 0, "ok", data.dump());
 }
 
@@ -204,7 +396,7 @@ void HttpApiServer::handleHistory(const HttpRequest& req, HttpResponse* resp) {
 
     // 统一鉴权：确保请求来自已登录用户
     int64_t auth_user_id = AuthenticateRequest(req, resp);
-    // if (auth_user_id <= 0) return;
+    if (auth_user_id <= 0) return;
 
     nlohmann::json j;
     if (!ParseJsonBody(req.body(), &j)) {
@@ -249,6 +441,30 @@ void HttpApiServer::handleHistory(const HttpRequest& req, HttpResponse* resp) {
         WriteError(resp, 500, "query history failed: " + err);
         return;
     }
+    // 历史消息统一展示“当前昵称/头像”：批量查发送者，避免逐条查库。
+    std::vector<int64_t> sender_ids;
+    std::unordered_set<int64_t> seen_senders;
+    for (const auto& m : msgs) {
+        if (m.sender_id > 0 && seen_senders.insert(m.sender_id).second) {
+            sender_ids.push_back(m.sender_id);
+        }
+    }
+    std::unordered_map<int64_t, UserBrief> sender_views;
+    if (!sender_ids.empty() && user_dao_) {
+        std::vector<User> senders;
+        std::string user_err;
+        if (!user_dao_->ListUsersByIds(sender_ids, &senders, &user_err)) {
+            WriteError(resp, 500, "load message senders failed: " + user_err);
+            return;
+        }
+        for (const auto& sender : senders) {
+            UserBrief brief;
+            BuildUserBrief(media_dao_, s3_client_,
+                           media_download_url_ttl_seconds_, sender, &brief);
+            sender_views[sender.id] = std::move(brief);
+        }
+    }
+
     nlohmann::json data;
     data["messages"] = nlohmann::json::array();
     for (const auto& m : msgs) {
@@ -259,6 +475,16 @@ void HttpApiServer::handleHistory(const HttpRequest& req, HttpResponse* resp) {
         entry["sender_id"] = m.sender_id;
         entry["timestamp_ms"] = m.timestamp_ms;
         entry["msg_type"] = m.msg_type;
+        auto sender_it = sender_views.find(m.sender_id);
+        if (sender_it != sender_views.end()) {
+            entry["sender"] = UserBriefToJson(sender_it->second, false);
+        } else {
+            // 用户被删除等异常数据：保留可读占位，不让整页历史失败。
+            UserBrief fallback;
+            fallback.user_id = m.sender_id;
+            fallback.name = "User " + std::to_string(m.sender_id);
+            entry["sender"] = UserBriefToJson(fallback, false);
+        }
         // content_json 本身是一段 JSON
         // 文本，解析后作为嵌套对象输出（与原格式一致）；
         // 解析失败时降级为字符串，保证响应始终是合法 JSON
@@ -317,6 +543,22 @@ void HttpApiServer::handleMarkRead(const HttpRequest& req, HttpResponse* resp) {
         return;
     }
     std::string err;
+    int64_t last_seq = 0;
+    if (!store_->GetLastSeq(session_id, &last_seq, &err)) {
+        if (err == "session not found") {
+            // 会话尚未创建（从未发过消息），没有可标记的已读位置。
+            WriteJson(resp, 0, "ok");
+            return;
+        }
+        WriteError(resp, 500, "get session last seq failed: " + err);
+        return;
+    }
+    // 防止客户端传入超过会话最新序号的游标，导致长期 0 未读。
+    if (read_seq > last_seq) read_seq = last_seq;
+    if (read_seq <= 0) {
+        WriteJson(resp, 0, "ok");
+        return;
+    }
     if (!store_->MarkRead(user_id, session_id, read_seq, &err)) {
         WriteError(resp, 500, "mark read failed: " + err);
         return;
@@ -367,9 +609,17 @@ void HttpApiServer::handleUnread(const HttpRequest& req, HttpResponse* resp) {
         WriteError(resp, 500, "get unread failed: " + err);
         return;
     }
-    std::ostringstream data;
-    data << "{\"unread\":" << unread << "}";
-    WriteJson(resp, 0, "ok", data.str());
+    int64_t last_seq = 0;
+    if (!store_->GetLastSeq(session_id, &last_seq, &err)) {
+        if (err != "session not found") {
+            WriteError(resp, 500, "get session last seq failed: " + err);
+            return;
+        }
+    }
+    WriteJson(resp, 0, "ok",
+              nlohmann::json{{"unread", unread},
+                             {"last_msg_seq", last_seq}}
+                  .dump());
 }
 
 // read
@@ -391,21 +641,133 @@ void HttpApiServer::handleSingleSessionList(const HttpRequest& req,
         WriteError(resp, 500, "list sessions failed: " + err);
         return;
     }
-    std::ostringstream data;
-    data << "{\"sessions\":[";
-    bool first = true;
+    // 最近有消息的会话优先展示。
+    std::sort(sessions.begin(), sessions.end(),
+              [](const Session& a, const Session& b) {
+                  return a.last_msg_seq > b.last_msg_seq;
+              });
+
+    std::vector<int64_t> peer_ids;
+    std::unordered_set<int64_t> seen_peers;
+    for (const auto& s : sessions) {
+        int64_t peer_id = (s.user1_id == user_id) ? s.user2_id : s.user1_id;
+        if (peer_id > 0 && seen_peers.insert(peer_id).second) {
+            peer_ids.push_back(peer_id);
+        }
+    }
+    std::vector<User> peers;
+    if (!peer_ids.empty()) {
+        if (!user_dao_) {
+            WriteError(resp, 500, "user dao not initialized");
+            return;
+        }
+        if (!user_dao_->ListUsersByIds(peer_ids, &peers, &err)) {
+            WriteError(resp, 500, "load session peers failed: " + err);
+            return;
+        }
+    }
+    std::unordered_map<int64_t, User> peer_map;
+    for (auto& peer : peers) peer_map[peer.id] = std::move(peer);
+
+    nlohmann::json data;
+    data["sessions"] = nlohmann::json::array();
     for (const auto& s : sessions) {
         int64_t peer_id = (s.user1_id == user_id) ? s.user2_id : s.user1_id;
         if (peer_id <= 0) continue;
-        if (!first) data << ",";
-        first = false;
-        data << "{"
-             << "\"session_id\":\"" << s.id << "\","
-             << "\"peer_user_id\":" << peer_id << ","
-             << "\"last_msg_seq\":" << s.last_msg_seq << "}";
+        int64_t unread = 0;
+        if (!store_->GetUnread(user_id, s.id, &unread, &err)) {
+            WriteError(resp, 500, "get unread failed: " + err);
+            return;
+        }
+        UserBrief brief;
+        auto peer_it = peer_map.find(peer_id);
+        if (peer_it != peer_map.end()) {
+            BuildUserBrief(media_dao_, s3_client_,
+                           media_download_url_ttl_seconds_, peer_it->second,
+                           &brief);
+        } else {
+            brief.user_id = peer_id;
+            brief.name = "User " + std::to_string(peer_id);
+        }
+        nlohmann::json entry;
+        entry["session_id"] = s.id;
+        entry["peer_user_id"] = peer_id;
+        entry["last_msg_seq"] = s.last_msg_seq;
+        entry["unread"] = unread;
+        entry["peer_name"] = brief.name;
+        entry["peer_avatar_media_id"] = brief.avatar_media_id;
+        entry["peer_avatar_url"] = brief.avatar_url;
+        entry["peer_avatar_expires_at"] = brief.avatar_expires_at;
+        data["sessions"].push_back(std::move(entry));
     }
-    data << "]}";
-    WriteJson(resp, 0, "ok", data.str());
+    WriteJson(resp, 0, "ok", data.dump());
+}
+
+// 全局未读：单聊 + 已加入聊天室。只读，不创建任何 session。
+void HttpApiServer::handleUnreadSummary(const HttpRequest& req,
+                                        HttpResponse* resp) {
+    if (!RequirePost(req, resp)) return;
+    int64_t user_id = AuthenticateRequest(req, resp);
+    if (user_id <= 0) return;
+    if (!store_ || !group_member_dao_) {
+        WriteError(resp, 500, "conversation store not initialized");
+        return;
+    }
+
+    std::string err;
+    int64_t total = 0;
+    nlohmann::json data;
+    data["sessions"] = nlohmann::json::array();
+
+    std::vector<Session> singles;
+    if (!store_->ListUserSingleSessions(user_id, &singles, &err)) {
+        WriteError(resp, 500, "list single sessions failed: " + err);
+        return;
+    }
+    for (const auto& session : singles) {
+        int64_t unread = 0;
+        if (!store_->GetUnread(user_id, session.id, &unread, &err)) {
+            WriteError(resp, 500, "get single unread failed: " + err);
+            return;
+        }
+        total += unread;
+        data["sessions"].push_back(
+            nlohmann::json{{"session_id", session.id},
+                           {"type", 0},
+                           {"unread", unread},
+                           {"last_msg_seq", session.last_msg_seq}});
+    }
+
+    std::vector<int64_t> room_ids;
+    if (!group_member_dao_->ListUserChatrooms(user_id, &room_ids, &err)) {
+        WriteError(resp, 500, "list user chatrooms failed: " + err);
+        return;
+    }
+    for (int64_t room_id : room_ids) {
+        std::string session_id = "room:" + std::to_string(room_id);
+        Session session;
+        if (!store_->GetSessionById(session_id, &session, &err)) {
+            // 从未产生过消息的房间没有 session 行，自然没有未读。
+            if (err == "session not found") continue;
+            WriteError(resp, 500, "get room session failed: " + err);
+            return;
+        }
+        int64_t unread = 0;
+        if (!store_->GetUnread(user_id, session_id, &unread, &err)) {
+            WriteError(resp, 500, "get room unread failed: " + err);
+            return;
+        }
+        total += unread;
+        data["sessions"].push_back(
+            nlohmann::json{{"session_id", session_id},
+                           {"type", 2},
+                           {"room_id", room_id},
+                           {"unread", unread},
+                           {"last_msg_seq", session.last_msg_seq}});
+    }
+
+    data["total"] = total;
+    WriteJson(resp, 0, "ok", data.dump());
 }
 
 }  // namespace sparkpush

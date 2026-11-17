@@ -157,8 +157,11 @@ HttpResponse::HttpStatusCode HttpStatusForCode(int code) {
             return HttpResponse::k403Forbidden;
         case 404:
             return HttpResponse::k404NotFound;
+        case 413:
+        case 415:
+        case 429:
+        case 503:
         case 500:
-            return HttpResponse::k500InternalServerError;
         default:
             return static_cast<HttpResponse::HttpStatusCode>(code);
     }
@@ -194,23 +197,34 @@ void WriteJson(HttpResponse* resp, int code, const std::string& message,
 
 // read
 HttpApiServer::HttpApiServer(uint16_t port, ConversationStore* store,
-                             UserDao* user_dao, GroupDao* group_dao,
+                             UserDao* user_dao,
+                             FriendService* friend_service, GroupDao* group_dao,
                              GroupMemberDao* group_member_dao,
                              RedisStore* redis_store,
                              KafkaProducer* kafka_producer,
                              KafkaProducer* broadcast_producer,
-                             DanmakuDao* danmaku_dao, const Config& config)
+                             DanmakuDao* danmaku_dao, MediaDao* media_dao,
+                             S3Client* s3_client, const Config& config)
     : store_(store),
       user_dao_(user_dao),
+      friend_service_(friend_service),
       group_dao_(group_dao),
       group_member_dao_(group_member_dao),
       redis_store_(redis_store),
       kafka_producer_(kafka_producer),
       broadcast_producer_(broadcast_producer),
       danmaku_dao_(danmaku_dao),
+      media_dao_(media_dao),
+      s3_client_(s3_client),
       admin_account_(config.admin_account),
       admin_password_hash_(config.admin_password_hash),
       admin_user_id_(config.admin_user_id),
+      media_max_image_bytes_(config.media_max_image_bytes),
+      media_max_video_bytes_(config.media_max_video_bytes),
+      media_max_file_bytes_(config.media_max_file_bytes),
+      media_download_url_ttl_seconds_(
+          config.media_download_url_ttl_seconds),
+      media_task_max_attempts_(config.media_task_max_attempts),
       server_(port, "logic_http_server") {
     detail::g_cors_allow_origin = config.cors_allow_origin;
     server_.setHttpCallback([this](const HttpRequest& req, HttpResponse* resp) {
@@ -240,12 +254,24 @@ void HttpApiServer::onRequest(const HttpRequest& req, HttpResponse* resp) {
         {"/api/session/mark_read", &HttpApiServer::handleMarkRead}, // 更新已读游标 read
         {"/api/session/list_single", &HttpApiServer::handleSingleSessionList}, // 刷新单聊会话列表 read
         {"/api/session/unread", &HttpApiServer::handleUnread}, // 获取未读消息数 read
+        {"/api/session/unread_summary", &HttpApiServer::handleUnreadSummary},
+        {"/api/session/open_single", &HttpApiServer::handleOpenSingleSession},
+        {"/api/user/profile", &HttpApiServer::handleUserProfileGet},
+        {"/api/user/profile/update", &HttpApiServer::handleUserProfileUpdate},
+        {"/api/user/search", &HttpApiServer::handleUserSearch},
+        {"/api/friend/request", &HttpApiServer::handleFriendRequest},
+        {"/api/friend/respond", &HttpApiServer::handleFriendRespond},
+        {"/api/friend/list", &HttpApiServer::handleFriendList},
+        {"/api/friend/requests", &HttpApiServer::handleFriendRequests},
+        {"/api/friend/pending_count", &HttpApiServer::handleFriendPendingCount},
         {"/api/chatroom/join", &HttpApiServer::handleChatroomJoin},
         {"/api/chatroom/leave", &HttpApiServer::handleChatroomLeave},
         {"/api/chatroom/unsubscribe",&HttpApiServer::handleChatroomUnsubscribe},
         {"/api/chatroom/online_count",&HttpApiServer::handleChatroomOnlineCount},
         {"/api/danmaku/send", &HttpApiServer::handleDanmakuSend},
         {"/api/danmaku/list", &HttpApiServer::handleDanmakuList},
+        {"/api/media/upload/init", &HttpApiServer::handleMediaUploadInit},
+        {"/api/media/upload/complete", &HttpApiServer::handleMediaUploadComplete},
         {"/api/chatroom/list", &HttpApiServer::handleChatroomList},
         {"/api/admin/chatroom/create",&HttpApiServer::handleAdminCreateChatroom},
         {"/api/admin/chatroom/list", &HttpApiServer::handleAdminListChatroom},
@@ -261,13 +287,21 @@ void HttpApiServer::onRequest(const HttpRequest& req, HttpResponse* resp) {
     // 不参与 /api/... 的业务分发。
 
     auto it = kRouteTable.find(path);
-    if (it == kRouteTable.end()) {
-        WriteError(resp, 404, "unknown path");
+    if (it != kRouteTable.end()) {
+        Handler handler = it->second;
+        (this->*handler)(req, resp);
         return;
     }
 
-    Handler handler = it->second;
-    (this->*handler)(req, resp);
+    // /api/media/{media_id} 是路径参数，不能放进精确匹配表。
+    // 注意必须放在精确路由之后，否则 /api/media/upload/init 会被当成 media_id。
+    static const std::string kMediaPrefix = "/api/media/";
+    if (path.compare(0, kMediaPrefix.size(), kMediaPrefix) == 0) {
+        handleMediaGet(req, resp);
+        return;
+    }
+
+    WriteError(resp, 404, "unknown path");
 }
 
 // ---- handler 通用样板辅助 ----

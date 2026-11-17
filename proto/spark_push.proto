@@ -26,6 +26,9 @@ enum MsgType {
   MSG_TYPE_SYSTEM = 2;
   MSG_TYPE_DANMAKU = 3;
   MSG_TYPE_BROADCAST = 4;
+  MSG_TYPE_IMAGE = 5;
+  MSG_TYPE_FILE = 6;
+  MSG_TYPE_VIDEO = 7;
 }
 
 // 广播范围（原自由字符串 scope: all / group）

@@ -29,6 +29,9 @@ compile_commands.json
 kafka-data/
 /data/
 
+# Local JDK/Kafka toolchain (course-provided, contains runtime data)
+/cmake/software_spark_push/
+
 # ---- Editor / IDE ----
 .vscode/
 .idea/
@@ -38,5 +41,10 @@ kafka-data/
 .DS_Store
 
 # ---- Other ----
+
 old_docs/
 docs/
+CLAUDE.md
+.claude/
+
+*.tar.gz

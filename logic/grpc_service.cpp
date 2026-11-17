@@ -25,12 +25,15 @@ std::string GenerateRandomSuffix(int range = 100000) {
 
 LogicServiceImpl::LogicServiceImpl(ConversationStore* store,
                                    GroupMemberDao* group_member_dao,
-                                   UserDao* user_dao, KafkaProducer* producer,
+                                   UserDao* user_dao,
+                                   FriendService* friend_service,
+                                   KafkaProducer* producer,
                                    KafkaProducer* broadcast_producer,
                                    RedisStore* redis_store)
     : store_(store),
       group_member_dao_(group_member_dao),
       user_dao_(user_dao),
+      friend_service_(friend_service),
       producer_(producer),
       broadcast_producer_(broadcast_producer),
       redis_store_(redis_store) {}
@@ -283,6 +286,28 @@ void LogicServiceImpl::HandleUpstreamMessage(
         int64_t max_id = std::max(from_user, to_user);
         session_id =
             "single:" + std::to_string(min_id) + ":" + std::to_string(max_id);
+
+        // 单聊只允许好友：Comet 是主要发送入口，权限必须在 Logic 再校验一次，
+        // 不能只依赖 HTTP /api/message/send。
+        if (!friend_service_) {
+            SetError(response->mutable_error(), 500,
+                     "friend service not initialized");
+            return;
+        }
+        bool is_friend = false;
+        std::string friend_err;
+        if (!friend_service_->AreFriends(from_user, to_user, &is_friend,
+                                         &friend_err)) {
+            LogError("AreFriends failed: " + friend_err);
+            SetError(response->mutable_error(), 500,
+                     "check friendship failed");
+            return;
+        }
+        if (!is_friend) {
+            SetError(response->mutable_error(), 403,
+                     "only friends can send single chat messages");
+            return;
+        }
 
         // 查询目标用户的路由：先查本地缓存（shared_mutex 读锁），miss 则查
         // Redis 返回去重后的 comet_id 列表（用户可能有多条连接在同一 Comet 上）

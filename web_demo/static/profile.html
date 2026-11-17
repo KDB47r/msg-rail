@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>我的资料 · MsgRail</title>
+  <meta name="description" content="MsgRail 个人资料：修改昵称与上传头像" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='7' fill='%232563eb'/%3E%3Cpath d='M5 17V8l7 4.5L19 8v9' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="ui/tokens.css" />
+  <link rel="stylesheet" href="ui/base.css" />
+  <link rel="stylesheet" href="ui/chat.css" />
+  <style>
+    .page-shell {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background-color: var(--mr-bg);
+      background-image:
+        radial-gradient(60% 45% at 100% 0%, var(--mr-aurora-1), transparent 70%),
+        radial-gradient(50% 40% at 0% 100%, var(--mr-aurora-2), transparent 70%);
+    }
+    .page-header {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--mr-border);
+      background: var(--mr-glass);
+      -webkit-backdrop-filter: blur(18px) saturate(1.15);
+      backdrop-filter: blur(18px) saturate(1.15);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .page-nav { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
+    .page-nav a {
+      padding: 7px 12px;
+      border-radius: 9px;
+      color: var(--mr-text-2);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .page-nav a:hover { background: var(--mr-surface-2); color: var(--mr-text); }
+    .page-nav a.active { background: var(--mr-accent-soft); color: var(--mr-accent); }
+    .profile-main {
+      width: min(760px, 100%);
+      margin: 0 auto;
+      padding: 34px 20px 60px;
+    }
+    .profile-card {
+      border: 1px solid var(--mr-border);
+      border-radius: 20px;
+      background: var(--mr-surface);
+      box-shadow: var(--mr-shadow);
+      overflow: hidden;
+    }
+    .profile-cover {
+      height: 112px;
+      background-color: var(--mr-accent-solid);
+      background-image: var(--mr-gradient);
+      position: relative;
+    }
+    .profile-avatar-wrap {
+      position: relative;
+      width: 116px;
+      height: 116px;
+      margin: -58px 0 0 28px;
+      border-radius: 50%;
+      padding: 4px;
+      background: var(--mr-surface);
+      box-shadow: var(--mr-shadow-sm);
+    }
+    .profile-avatar {
+      width: 108px;
+      height: 108px;
+      border-radius: 50%;
+      font-size: 30px;
+    }
+    .profile-content { padding: 18px 28px 28px; }
+    .profile-title {
+      margin: 0 0 2px;
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--mr-text);
+    }
+    .profile-sub {
+      margin: 0 0 22px;
+      font-size: 12.5px;
+      color: var(--mr-text-3);
+    }
+    .field { margin-bottom: 18px; }
+    .field label {
+      display: block;
+      margin-bottom: 7px;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--mr-text-2);
+    }
+    .field .form-control { height: 42px; }
+    .field-hint {
+      margin-top: 6px;
+      font-size: 11.5px;
+      line-height: 1.55;
+      color: var(--mr-text-3);
+    }
+    .avatar-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin: 16px 0 24px;
+    }
+    .avatar-actions .mini-btn {
+      height: 34px;
+      padding: 0 14px;
+      border: 1px solid var(--mr-border);
+      border-radius: 9px;
+      background: var(--mr-surface);
+      color: var(--mr-text-2);
+      font-family: var(--mr-font);
+      font-size: 12.5px;
+      cursor: pointer;
+    }
+    .avatar-actions .mini-btn:hover { border-color: var(--mr-border-strong); color: var(--mr-text); }
+    .avatar-actions .mini-btn:disabled { opacity: 0.55; cursor: default; }
+    .upload-track {
+      display: none;
+      flex: 1;
+      min-width: 140px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--mr-surface-2);
+      overflow: hidden;
+    }
+    .upload-track.show { display: block; }
+    .upload-fill {
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background-image: var(--mr-gradient);
+      background-color: var(--mr-accent-solid);
+      transition: width 0.15s linear;
+    }
+    .profile-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding-top: 4px;
+    }
+    .profile-actions .btn-primary { height: 42px; padding: 0 22px; }
+    .profile-actions .mini-btn {
+      height: 42px;
+      padding: 0 16px;
+      border: 1px solid var(--mr-border);
+      border-radius: 10px;
+      background: var(--mr-surface);
+      color: var(--mr-text-2);
+      font-family: var(--mr-font);
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .meta-item {
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: var(--mr-surface-2);
+    }
+    .meta-item .k { display: block; font-size: 11px; color: var(--mr-text-3); margin-bottom: 3px; }
+    .meta-item .v { font-size: 13px; font-weight: 600; color: var(--mr-text); word-break: break-all; }
+    @media (max-width: 640px) {
+      .page-header { padding: 12px 14px; gap: 10px; flex-wrap: wrap; }
+      .page-nav { order: 3; flex-basis: 100%; overflow-x: auto; }
+      .brand-sub { display: none; }
+      .profile-main { padding: 20px 12px 48px; }
+      .profile-content { padding: 16px 18px 22px; }
+      .profile-avatar-wrap { margin-left: 18px; }
+      .meta-grid { grid-template-columns: minmax(0, 1fr); }
+    }
+  </style>
+  <script src="ui/theme.js"></script>
+  <script src="ui/icons.js"></script>
+  <script src="auth.js"></script>
+  <script src="ui/user_profile.js"></script>
+</head>
+<body class="page-shell">
+  <div id="toast-container" role="status" aria-live="polite"></div>
+
+  <header class="page-header">
+    <a class="brand" href="index.html" aria-label="MsgRail 消息中心">
+      <span class="brand-mark">
+        <svg class="mr-icon" aria-hidden="true"><use href="#i-logo"></use></svg>
+      </span>
+      <span class="brand-text">
+        <span class="brand-name">MsgRail</span>
+        <span class="brand-sub">我的资料</span>
+      </span>
+    </a>
+    <nav class="page-nav" aria-label="页面导航">
+      <a href="index.html">消息</a>
+      <a href="contacts.html">联系人</a>
+      <a href="chatroom.html">聊天室</a>
+      <a class="active" href="profile.html">我的资料</a>
+    </nav>
+  </header>
+
+  <main class="profile-main">
+    <section class="profile-card">
+      <div class="profile-cover"></div>
+      <div class="profile-avatar-wrap">
+        <div id="profile-avatar" class="avatar-placeholder profile-avatar">Me</div>
+      </div>
+      <div class="profile-content">
+        <h1 class="profile-title" id="profile-title">User</h1>
+        <p class="profile-sub">昵称和头像会显示在单聊与聊天室中。</p>
+
+        <div class="meta-grid">
+          <div class="meta-item">
+            <span class="k">UserID（唯一，不可修改）</span>
+            <span class="v" id="meta-user-id">-</span>
+          </div>
+          <div class="meta-item">
+            <span class="k">账号</span>
+            <span class="v" id="meta-account">-</span>
+          </div>
+        </div>
+
+        <div class="avatar-actions">
+          <input id="avatar-file" type="file" accept="image/jpeg,image/png,image/webp" style="display:none" />
+          <button id="pick-avatar-btn" class="mini-btn" type="button">更换头像</button>
+          <div id="upload-track" class="upload-track"><div id="upload-fill" class="upload-fill"></div></div>
+          <span id="upload-status" class="status-text"></span>
+        </div>
+
+        <form id="profile-form">
+          <div class="field">
+            <label for="name-input">昵称</label>
+            <input id="name-input" class="form-control" maxlength="32"
+                   autocomplete="nickname" placeholder="1-32 个字符" />
+            <div class="field-hint">
+              昵称可以重复，系统始终用 UserID 区分用户；修改后历史消息也会显示新昵称。
+            </div>
+          </div>
+          <div class="profile-actions">
+            <button id="save-name-btn" class="btn-primary" type="submit">保存昵称</button>
+            <button id="back-btn" class="mini-btn" type="button">返回消息中心</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      'use strict';
+
+      const saved = window.Auth && Auth.get();
+      if (!saved || !saved.token) {
+        window.location.replace('index.html');
+        return;
+      }
+      const token = saved.token;
+      const myUserId = Number(saved.user_id);
+      const logicBase = window.location.protocol + '//' +
+                        window.location.hostname + ':9101';
+      const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+      let uploading = false;
+
+      function authHeaders() {
+        return {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + token
+        };
+      }
+
+      // 与 index.html / chatroom.html 一致：HTTP 明确返回 401 时清掉本地会话，
+      // 提示重新登录，避免残留过期 token 时页面看似正常但所有操作都失败。
+      let sessionExpired = false;
+      function handleTokenExpired() {
+        if (sessionExpired) return;
+        sessionExpired = true;
+        Auth.clear();
+        showToast('登录状态已失效，请重新登录');
+        setTimeout(() => { window.location.replace('index.html'); }, 1200);
+      }
+
+      async function apiPost(path, payload) {
+        const resp = await fetch(logicBase + path, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify(payload || {})
+        });
+        if (resp.status === 401) handleTokenExpired();
+        let body = {};
+        try { body = await resp.json(); } catch (e) { body = {}; }
+        if (!resp.ok || body.code !== 0) {
+          const err = new Error(body.message || ('HTTP ' + resp.status));
+          err.status = resp.status;
+          throw err;
+        }
+        return body.data || {};
+      }
+
+      function showToast(msg) {
+        const container = document.getElementById('toast-container');
+        const div = document.createElement('div');
+        div.className = 'toast';
+        div.textContent = msg;
+        container.appendChild(div);
+        setTimeout(() => {
+          div.style.animation = 'toast-out 0.3s ease-in forwards';
+          div.addEventListener('animationend', () => {
+            if (div.parentNode) div.parentNode.removeChild(div);
+          });
+        }, 3200);
+      }
+
+      function setUploadStatus(text) {
+        const el = document.getElementById('upload-status');
+        el.textContent = text || '';
+      }
+
+      function setProgress(pct) {
+        const track = document.getElementById('upload-track');
+        const fill = document.getElementById('upload-fill');
+        if (pct === null) {
+          track.classList.remove('show');
+          fill.style.width = '0';
+          return;
+        }
+        track.classList.add('show');
+        fill.style.width = Math.max(0, Math.min(100, pct)) + '%';
+      }
+
+      function applyProfile(next) {
+        UserProfile.prime(next);
+        const name = next.name || ('User ' + myUserId);
+        document.getElementById('profile-avatar').textContent = '';
+        UserProfile.applyAvatar(
+          document.getElementById('profile-avatar'), next, myUserId);
+        document.getElementById('profile-title').textContent = name;
+        document.getElementById('name-input').value = next.name || '';
+        document.getElementById('meta-user-id').textContent = String(myUserId);
+        document.getElementById('meta-account').textContent = next.account || '-';
+        Auth.set(myUserId, token, name);
+      }
+
+      async function loadProfile() {
+        try {
+          const data = await apiPost('/api/user/profile', {});
+          applyProfile(data);
+        } catch (e) {
+          if (e.status !== 401) showToast('资料加载失败: ' + e.message);
+        }
+      }
+
+      function guessImageMime(file) {
+        if (file.type === 'image/jpeg' || file.type === 'image/png' ||
+            file.type === 'image/webp') {
+          return file.type;
+        }
+        const name = (file.name || '').toLowerCase();
+        if (name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'image/jpeg';
+        if (name.endsWith('.png')) return 'image/png';
+        if (name.endsWith('.webp')) return 'image/webp';
+        return '';
+      }
+
+      function uploadWithProgress(url, file, contentType, onProgress) {
+        return new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('PUT', url, true);
+          xhr.timeout = 120000;
+          xhr.setRequestHeader('Content-Type', contentType);
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable && onProgress) {
+              onProgress(Math.round(e.loaded * 100 / e.total));
+            }
+          };
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) resolve();
+            else reject(new Error('直传失败 HTTP ' + xhr.status));
+          };
+          xhr.onerror = () => reject(new Error('直传网络错误，请检查 MinIO 与 CORS'));
+          xhr.ontimeout = () => reject(new Error('直传超时'));
+          xhr.send(file);
+        });
+      }
+
+      function sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+      }
+
+      async function uploadAvatar(file) {
+        if (uploading) return;
+        const mime = guessImageMime(file);
+        if (!mime) {
+          alert('头像只支持 JPEG / PNG / WebP');
+          return;
+        }
+        if (file.size <= 0 || file.size > MAX_IMAGE_BYTES) {
+          alert('头像大小必须在 20 MiB 以内');
+          return;
+        }
+        uploading = true;
+        const pickBtn = document.getElementById('pick-avatar-btn');
+        pickBtn.disabled = true;
+        try {
+          setUploadStatus('上传中 0%');
+          setProgress(0);
+          const init = await apiPost('/api/media/upload/init', {
+            kind: 'image',
+            mime_type: mime,
+            size_bytes: file.size,
+            filename: file.name || 'avatar'
+          });
+          await uploadWithProgress(init.upload_url, file, mime, pct => {
+            setUploadStatus('上传中 ' + pct + '%');
+            setProgress(pct);
+          });
+          setUploadStatus('服务端处理中...');
+          await apiPost('/api/media/upload/complete',
+                        { media_id: init.media_id });
+
+          let meta = null;
+          for (let i = 0; i < 60; ++i) {
+            const resp = await fetch(
+              logicBase + '/api/media/' + encodeURIComponent(init.media_id),
+              { method: 'GET', headers: authHeaders() });
+            const body = await resp.json();
+            if (resp.status === 401) handleTokenExpired();
+            if (!resp.ok || body.code !== 0) {
+              const err = new Error(body.message || ('HTTP ' + resp.status));
+              err.status = resp.status;
+              throw err;
+            }
+            meta = body.data || {};
+            if (meta.status === 'ready') break;
+            if (meta.status === 'failed') {
+              throw new Error(meta.error || '图片处理失败');
+            }
+            await sleep(500);
+          }
+          if (!meta || meta.status !== 'ready') {
+            throw new Error('图片处理超时');
+          }
+
+          setUploadStatus('保存头像...');
+          const updated = await apiPost('/api/user/profile/update',
+                                        { avatar_media_id: init.media_id });
+          applyProfile(updated);
+          setUploadStatus('头像已更新');
+          showToast('头像已更新');
+        } catch (e) {
+          setUploadStatus('');
+          if (!e || e.status !== 401) {
+            showToast('头像上传失败: ' + (e && e.message ? e.message : e));
+          }
+        } finally {
+          uploading = false;
+          pickBtn.disabled = false;
+          setProgress(null);
+          document.getElementById('avatar-file').value = '';
+        }
+      }
+
+      document.getElementById('pick-avatar-btn').onclick = () => {
+        if (uploading) return;
+        document.getElementById('avatar-file').click();
+      };
+      document.getElementById('avatar-file').onchange = (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (file) uploadAvatar(file);
+      };
+
+      document.getElementById('profile-form').addEventListener('submit',
+        async (e) => {
+          e.preventDefault();
+          const name = document.getElementById('name-input').value.trim();
+          if (!name) {
+            alert('昵称不能为空');
+            return;
+          }
+          const btn = document.getElementById('save-name-btn');
+          btn.disabled = true;
+          try {
+            const updated = await apiPost('/api/user/profile/update', { name });
+            applyProfile(updated);
+            showToast('昵称已保存');
+          } catch (err) {
+            if (err.status !== 401) showToast('保存昵称失败: ' + err.message);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+
+      document.getElementById('back-btn').onclick = () => {
+        window.location.href = 'index.html';
+      };
+
+      loadProfile();
+    })();
+  </script>
+</body>
+</html>

@@ -3,6 +3,7 @@
 #include "config.h"
 #include "conversation_store.h"
 #include "danmaku_dao.h"
+#include "friend_service.h"
 #include "group_dao.h"
 #include "kafka_producer.h"
 #include "net/http_server_lite.h"
@@ -11,15 +12,20 @@
 
 namespace sparkpush {
 
+class MediaDao;
+class S3Client;
+
 class HttpApiServer {
    public:
     using HttpRequest = ::sparkpush::net::HttpRequest;
     using HttpResponse = ::sparkpush::net::HttpResponse;
 
     HttpApiServer(uint16_t port, ConversationStore* store, UserDao* user_dao,
-                  GroupDao* group_dao, GroupMemberDao* group_member_dao,
-                  RedisStore* redis_store, KafkaProducer* kafka_producer,
+                  FriendService* friend_service, GroupDao* group_dao,
+                  GroupMemberDao* group_member_dao, RedisStore* redis_store,
+                  KafkaProducer* kafka_producer,
                   KafkaProducer* broadcast_producer, DanmakuDao* danmaku_dao,
+                  MediaDao* media_dao, S3Client* s3_client,
                   const Config& config);
 
     void setThreadNum(int numThreads) { server_.setThreadNum(numThreads); }
@@ -38,13 +44,30 @@ class HttpApiServer {
     void handleMarkRead(const HttpRequest& req, HttpResponse* resp);
     void handleUnread(const HttpRequest& req, HttpResponse* resp);
 
+    // 用户资料 / 昵称搜索 / 好友
+    void handleUserProfileGet(const HttpRequest& req, HttpResponse* resp);
+    void handleUserProfileUpdate(const HttpRequest& req, HttpResponse* resp);
+    void handleUserSearch(const HttpRequest& req, HttpResponse* resp);
+    void handleFriendRequest(const HttpRequest& req, HttpResponse* resp);
+    void handleFriendRespond(const HttpRequest& req, HttpResponse* resp);
+    void handleFriendList(const HttpRequest& req, HttpResponse* resp);
+    void handleFriendRequests(const HttpRequest& req, HttpResponse* resp);
+    void handleFriendPendingCount(const HttpRequest& req, HttpResponse* resp);
+
     // 会话 / 房间列表
     void handleSingleSessionList(const HttpRequest& req, HttpResponse* resp);
+    void handleOpenSingleSession(const HttpRequest& req, HttpResponse* resp);
+    void handleUnreadSummary(const HttpRequest& req, HttpResponse* resp);
     void handleChatroomList(const HttpRequest& req, HttpResponse* resp);
     void handleChatroomJoin(const HttpRequest& req, HttpResponse* resp);
     void handleChatroomLeave(const HttpRequest& req, HttpResponse* resp);
     void handleChatroomUnsubscribe(const HttpRequest& req, HttpResponse* resp);
     void handleChatroomOnlineCount(const HttpRequest& req, HttpResponse* resp);
+
+    // 媒体：初始化直传 / 确认上传 / 查询元数据与签名 URL
+    void handleMediaUploadInit(const HttpRequest& req, HttpResponse* resp);
+    void handleMediaUploadComplete(const HttpRequest& req, HttpResponse* resp);
+    void handleMediaGet(const HttpRequest& req, HttpResponse* resp);
 
     // 弹幕
     void handleDanmakuSend(const HttpRequest& req, HttpResponse* resp);
@@ -71,16 +94,24 @@ class HttpApiServer {
 
     ConversationStore* store_;
     UserDao* user_dao_;
+    FriendService* friend_service_;
     GroupDao* group_dao_;
     GroupMemberDao* group_member_dao_;
     RedisStore* redis_store_;
     KafkaProducer* kafka_producer_;
     KafkaProducer* broadcast_producer_;
     DanmakuDao* danmaku_dao_;
+    MediaDao* media_dao_;
+    S3Client* s3_client_;
 
     std::string admin_account_;
     std::string admin_password_hash_;
     int64_t admin_user_id_;
+    int64_t media_max_image_bytes_;
+    int64_t media_max_video_bytes_;
+    int64_t media_max_file_bytes_;
+    int media_download_url_ttl_seconds_;
+    int media_task_max_attempts_;
 
     ::sparkpush::net::HttpServerLite server_;
 };

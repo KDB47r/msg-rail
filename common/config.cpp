@@ -115,6 +115,26 @@ Config LoadConfig(const std::string& path) {
     cfg.admin_user_id = 900000000000LL;
     // CORS 默认允许任意来源。
     cfg.cors_allow_origin = "*";
+    // 媒体对象存储默认值：本地开发直接指向 MinIO 的 S3 API。
+    cfg.s3_endpoint = "http://127.0.0.1:9002";
+    cfg.s3_public_endpoint = "http://127.0.0.1:9002";
+    cfg.s3_bucket = "sparkpush-media";
+    cfg.s3_access_key = "minioadmin";
+    cfg.s3_secret_key = "minioadmin";
+    cfg.s3_region = "us-east-1";
+    cfg.s3_presign_ttl_seconds = 900;
+    cfg.s3_path_style = true;
+    cfg.media_max_image_bytes = 20LL * 1024 * 1024;
+    cfg.media_max_file_bytes = 50LL * 1024 * 1024;
+    cfg.media_max_pixels = 50000000;
+    cfg.media_max_side = 12000;
+    cfg.media_download_url_ttl_seconds = 900;
+    cfg.media_worker_threads = 2;
+    cfg.media_image_worker_threads = 3;
+    cfg.media_video_worker_threads = 1;
+    cfg.media_worker_poll_ms = 500;
+    cfg.media_task_max_attempts = 3;
+    cfg.media_memory_budget_mb = 1024;
     // 日志级别默认 INFO(2)。
     cfg.log_level = 2;
 
@@ -129,6 +149,9 @@ Config LoadConfig(const std::string& path) {
     // listen_port+100）。
     bool http_port_set = false;
     bool comet_grpc_port_set = false;
+    bool legacy_media_worker_threads_set = false;
+    bool media_image_worker_threads_set = false;
+    bool media_video_worker_threads_set = false;
 
     std::string line;
     while (std::getline(fin, line)) {
@@ -235,12 +258,121 @@ Config LoadConfig(const std::string& path) {
             cfg.admin_user_id = ParseInt64Or(key, value, cfg.admin_user_id);
         else if (key == "cors_allow_origin")
             cfg.cors_allow_origin = value;
+        else if (key == "s3_endpoint")
+            cfg.s3_endpoint = value;
+        else if (key == "s3_public_endpoint")
+            cfg.s3_public_endpoint = value;
+        else if (key == "s3_bucket")
+            cfg.s3_bucket = value;
+        else if (key == "s3_access_key")
+            cfg.s3_access_key = value;
+        else if (key == "s3_secret_key")
+            cfg.s3_secret_key = value;
+        else if (key == "s3_region")
+            cfg.s3_region = value;
+        else if (key == "s3_presign_ttl_seconds")
+            cfg.s3_presign_ttl_seconds =
+                ParseIntOr(key, value, cfg.s3_presign_ttl_seconds);
+        else if (key == "s3_path_style")
+            cfg.s3_path_style = (value == "true" || value == "1");
+        else if (key == "media_max_image_bytes")
+            cfg.media_max_image_bytes = ParseInt64Or(
+                key, value, cfg.media_max_image_bytes);
+        else if (key == "media_max_file_bytes")
+            cfg.media_max_file_bytes = ParseInt64Or(
+                key, value, cfg.media_max_file_bytes);
+        else if (key == "media_max_video_bytes")
+            cfg.media_max_video_bytes = ParseInt64Or(
+                key, value, cfg.media_max_video_bytes);
+        else if (key == "media_max_pixels")
+            cfg.media_max_pixels =
+                ParseIntOr(key, value, cfg.media_max_pixels);
+        else if (key == "media_max_side")
+            cfg.media_max_side = ParseIntOr(key, value, cfg.media_max_side);
+        else if (key == "media_max_video_duration_ms")
+            cfg.media_max_video_duration_ms = ParseInt64Or(
+                key, value, cfg.media_max_video_duration_ms);
+        else if (key == "media_max_video_pixels")
+            cfg.media_max_video_pixels = ParseIntOr(
+                key, value, cfg.media_max_video_pixels);
+        else if (key == "media_max_video_side")
+            cfg.media_max_video_side = ParseIntOr(
+                key, value, cfg.media_max_video_side);
+        else if (key == "media_video_poster_max_width")
+            cfg.media_video_poster_max_width = ParseIntOr(
+                key, value, cfg.media_video_poster_max_width);
+        else if (key == "media_video_process_timeout_seconds")
+            cfg.media_video_process_timeout_seconds = ParseIntOr(
+                key, value, cfg.media_video_process_timeout_seconds);
+        else if (key == "media_video_transcode_timeout_seconds")
+            cfg.media_video_transcode_timeout_seconds = ParseIntOr(
+                key, value, cfg.media_video_transcode_timeout_seconds);
+        else if (key == "media_video_transcode_max_side")
+            cfg.media_video_transcode_max_side = ParseIntOr(
+                key, value, cfg.media_video_transcode_max_side);
+        else if (key == "media_video_transcode_crf")
+            cfg.media_video_transcode_crf = ParseIntOr(
+                key, value, cfg.media_video_transcode_crf);
+        else if (key == "media_video_transcode_preset")
+            cfg.media_video_transcode_preset = value;
+        else if (key == "media_video_ffprobe_path")
+            cfg.media_video_ffprobe_path = value;
+        else if (key == "media_video_ffmpeg_path")
+            cfg.media_video_ffmpeg_path = value;
+        else if (key == "media_video_temp_dir")
+            cfg.media_video_temp_dir = value;
+        else if (key == "media_download_url_ttl_seconds")
+            cfg.media_download_url_ttl_seconds =
+                ParseIntOr(key, value, cfg.media_download_url_ttl_seconds);
+        else if (key == "media_worker_threads") {
+            cfg.media_worker_threads =
+                ParseIntOr(key, value, cfg.media_worker_threads);
+            legacy_media_worker_threads_set = true;
+        } else if (key == "media_image_worker_threads") {
+            cfg.media_image_worker_threads = ParseIntOr(
+                key, value, cfg.media_image_worker_threads);
+            media_image_worker_threads_set = true;
+        } else if (key == "media_video_worker_threads") {
+            cfg.media_video_worker_threads = ParseIntOr(
+                key, value, cfg.media_video_worker_threads);
+            media_video_worker_threads_set = true;
+        } else if (key == "media_worker_poll_ms")
+            cfg.media_worker_poll_ms =
+                ParseIntOr(key, value, cfg.media_worker_poll_ms);
+        else if (key == "media_task_max_attempts")
+            cfg.media_task_max_attempts =
+                ParseIntOr(key, value, cfg.media_task_max_attempts);
+        else if (key == "media_memory_budget_mb")
+            cfg.media_memory_budget_mb =
+                ParseIntOr(key, value, cfg.media_memory_budget_mb);
         else if (key == "log_level")
             cfg.log_level = ParseLogLevelOr(value, cfg.log_level);
         else {
             // 未知 key 保持容错：不报错，仅告警后忽略。
             LogWarn("LoadConfig: unknown config key '" + key + "' ignored");
         }
+    }
+
+    // 旧配置兼容：只有 media_worker_threads 时，图片 lane 沿用旧值，
+    // 视频 lane 默认 1。
+    if (legacy_media_worker_threads_set) {
+        if (!media_image_worker_threads_set) {
+            cfg.media_image_worker_threads = cfg.media_worker_threads;
+        }
+        if (!media_video_worker_threads_set) {
+            cfg.media_video_worker_threads = 1;
+        }
+        LogWarn(
+            "media_worker_threads is deprecated; use "
+            "media_image_worker_threads/media_video_worker_threads");
+    }
+    if (cfg.media_image_worker_threads < 1) {
+        LogWarn("media_image_worker_threads < 1, fallback to 1");
+        cfg.media_image_worker_threads = 1;
+    }
+    if (cfg.media_video_worker_threads < 1) {
+        LogWarn("media_video_worker_threads < 1, fallback to 1");
+        cfg.media_video_worker_threads = 1;
     }
 
     // 缺省推导：仅当配置文件未显式提供时才根据最终的 listen_port 推导。

@@ -535,7 +535,10 @@ void CometServer::HandleTextMessage(const ConnHandle& hdl,
                 result["client_msg_id"] = client_msg_id;
                 if (resp.error().code() != 0) {
                     result["type"] = "error";
-                    result["message"] = "send failed";
+                    result["message"] =
+                        resp.error().message().empty()
+                            ? "send failed"
+                            : resp.error().message();
                 } else {
                     result["type"] = "ack";
                     result["msg_id"] =
@@ -563,7 +566,7 @@ void CometServer::HandleTextMessage(const ConnHandle& hdl,
                                               : status.error_message();
                 LogError("SendUpstreamMessage failed: " + msg);
                 result["type"] = "error";
-                result["message"] = "send failed";
+                result["message"] = msg.empty() ? "send failed" : msg;
             } else {
                 result["type"] = "ack";
                 result["msg_id"] = rep.message().msg_id();

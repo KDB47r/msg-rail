@@ -130,6 +130,22 @@ clean_kafka() {
     done < <(echo "$configured_dirs" | tr ',' '\n' | sort -u)
 }
 
+stop_minio() {
+    if pgrep -x minio >/dev/null; then
+        log_info "停止 MinIO..."
+        pkill -x minio 2>/dev/null || true
+        local count=0
+        while pgrep -x minio >/dev/null; do
+            sleep 1
+            count=$((count + 1))
+            if [ "$count" -ge 10 ]; then
+                pkill -9 -x minio 2>/dev/null || true
+                break
+            fi
+        done
+    fi
+}
+
 stop_redis() {
     local redis_running=false
     if ss -tln 2>/dev/null | grep -q ':6379 '; then
@@ -195,11 +211,13 @@ main() {
     local failed=0 kafka_stopped=true
 
     stop_process web_demo_server
+    stop_process media_worker
     stop_process job_server
     stop_process comet_server
     stop_process logic_server
 
     if [ "$STOP_INFRA" = true ]; then
+        stop_minio
         stop_redis || failed=1
         if ! stop_kafka; then
             failed=1

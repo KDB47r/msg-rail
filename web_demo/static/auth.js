@@ -223,3 +223,7 @@ const Auth = {
     localStorage.removeItem(this.KEY_ADMIN_TOKEN);
   }
 };
+
+// 顶层 const 不会自动成为 window 属性；其余脚本用 window.Auth 做登录检查，
+// 这里显式导出，避免页面一加载就因 window.Auth 为 undefined 而跳回登录页。
+window.Auth = Auth;

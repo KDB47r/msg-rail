@@ -8,6 +8,7 @@
 #include <unordered_set>
 
 #include "conversation_store.h"
+#include "friend_service.h"
 #include "group_dao.h"
 #include "kafka_producer.h"
 #include "redis_store.h"
@@ -20,7 +21,8 @@ namespace sparkpush {
 class LogicServiceImpl final : public sparkpush::LogicService::Service {
    public:
     LogicServiceImpl(ConversationStore* store, GroupMemberDao* group_member_dao,
-                     UserDao* user_dao, KafkaProducer* producer,
+                     UserDao* user_dao, FriendService* friend_service,
+                     KafkaProducer* producer,
                      KafkaProducer* broadcast_producer,
                      RedisStore* redis_store);
 
@@ -80,6 +82,7 @@ class LogicServiceImpl final : public sparkpush::LogicService::Service {
     ConversationStore* store_;
     GroupMemberDao* group_member_dao_;
     UserDao* user_dao_;
+    FriendService* friend_service_;
     KafkaProducer* producer_;
     KafkaProducer* broadcast_producer_;
     RedisStore* redis_store_;

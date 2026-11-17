@@ -247,22 +247,35 @@ bool RedisStore::GetSessionLastSeq(const std::string& session_id,
 }
 
 // 保存用户在某会话的已读序号。
+// 已读游标只允许单调前进：聊天室重复 join、旧消息延迟到达等场景
+// 不能把已经读到的位置写回更小的值，否则未读数会“复活”。
 bool RedisStore::SetUserReadSeq(int64_t user_id, const std::string& session_id,
                                 int64_t read_seq) {
     if (!pool_) return false;
     auto guard = pool_->Acquire();
     redisContext* ctx = guard.get();
     if (!ctx) return false;
-    // hash tag {<sid>}：与 session:{<sid>}:seq 同 slot，支持 MGET / EVAL
+    // hash tag {<sid>}：与 session:{<sid>}:seq 同 slot，支持 MGET / EVAL。
+    // Lua 脚本必须通过 %s 作为单个参数传给 hiredis；若直接内嵌在格式串里，
+    // hiredis 会按空格把脚本拆成多个 EVAL 参数，Redis 返回语法错误。
+    static const char* kSetReadSeqLua =
+        "local cur = tonumber(redis.call('GET', KEYS[1]) or '-1'); "
+        "local val = tonumber(ARGV[1]); "
+        "if cur < val then redis.call('SET', KEYS[1], ARGV[1]) end; "
+        "return 1";
     redisReply* reply = (redisReply*)redisCommand(
-        ctx, "SET read_seq:{%s}:uid:%lld %lld", session_id.c_str(),
-        static_cast<long long>(user_id), static_cast<long long>(read_seq));
+        ctx, "EVAL %s 1 read_seq:{%s}:uid:%lld %lld", kSetReadSeqLua,
+        session_id.c_str(), static_cast<long long>(user_id),
+        static_cast<long long>(read_seq));
     if (!reply) {
-        LogError("Redis SET read_seq failed");
+        LogError("Redis EVAL SET read_seq failed");
         guard.MarkBroken();
         return false;
     }
     bool ok = (reply->type != REDIS_REPLY_ERROR);
+    if (!ok && reply->str) {
+        LogError(std::string("Redis EVAL SET read_seq error: ") + reply->str);
+    }
     freeReplyObject(reply);
     return ok;
 }
@@ -564,6 +577,45 @@ bool RedisStore::CheckRateLimit(const std::string& key, int window_ms,
     }
     freeReplyObject(reply);
     return allowed;
+}
+
+// 写入好友缓存。MySQL 提交成功后调用；失败只意味着下次回源。
+bool RedisStore::AddFriend(int64_t user_id, int64_t friend_user_id) {
+    if (!pool_) return false;
+    auto guard = pool_->Acquire();
+    redisContext* ctx = guard.get();
+    if (!ctx) return false;
+    redisReply* reply = (redisReply*)redisCommand(
+        ctx, "SADD friends:{%lld} %lld", static_cast<long long>(user_id),
+        static_cast<long long>(friend_user_id));
+    if (!reply) {
+        LogError("Redis SADD friends failed");
+        guard.MarkBroken();
+        return false;
+    }
+    bool ok = (reply->type != REDIS_REPLY_ERROR);
+    freeReplyObject(reply);
+    return ok;
+}
+
+// 返回 true 表示确认是好友；false 只代表“缓存未命中或 Redis 失败”，
+// 调用方必须回源 MySQL 才能下结论。
+bool RedisStore::IsFriend(int64_t user_id, int64_t friend_user_id) {
+    if (!pool_) return false;
+    auto guard = pool_->Acquire();
+    redisContext* ctx = guard.get();
+    if (!ctx) return false;
+    redisReply* reply = (redisReply*)redisCommand(
+        ctx, "SISMEMBER friends:{%lld} %lld", static_cast<long long>(user_id),
+        static_cast<long long>(friend_user_id));
+    if (!reply) {
+        LogError("Redis SISMEMBER friends failed");
+        guard.MarkBroken();
+        return false;
+    }
+    bool is_member = (reply->type == REDIS_REPLY_INTEGER && reply->integer == 1);
+    freeReplyObject(reply);
+    return is_member;
 }
 
 }  // namespace sparkpush

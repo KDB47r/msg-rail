@@ -2,116 +2,136 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <title>Spark 聊天室</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
-  <link rel="stylesheet" href="auth_style.css">
-  <style>
-    /* 复用 index.html 的大部分样式，保持风格统一 */
-    :root { 
-      --primary: #1976d2; 
-      --bg: #f5f7fa; 
-      --border: #e0e0e0;
-    }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 0; display: flex; height: 100vh; background: var(--bg); color: #333; }
-    /* .hidden is in auth_style.css but useful to keep if auth_style fails to load, but we can rely on it */
-    
-    #sidebar {
-      width: 280px;
-      background: #fff;
-      border-right: 1px solid var(--border);
-      display: flex; flex-direction: column;
-    }
-    .sb-header { padding: 20px; border-bottom: 1px solid var(--border); }
-    .sb-header h2 { margin: 0; color: var(--primary); font-size: 20px; }
-    
-    #auth-box { padding: 20px; }
-    /* Removed global input/button styles to use auth_style.css classes */
-    
-    #room-nav { flex: 1; display: flex; flex-direction: column; }
-    .room-list { flex: 1; overflow-y: auto; padding: 10px; }
-    .room-item {
-      padding: 12px; background: #fff; margin-bottom: 8px; border-radius: 6px; cursor: pointer;
-      border: 1px solid transparent; transition: all 0.2s;
-    }
-    .room-item:hover { background: #f0f7ff; }
-    .room-item.active { background: #e3f2fd; border-color: #bbdefb; }
-    
-    #main { flex: 1; display: flex; flex-direction: column; background: #fff; }
-    #header-bar { height: 60px; border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 20px; justify-content: space-between; background: #fff; }
-    #msgs { flex: 1; padding: 20px; overflow-y: auto; background: var(--bg); display: flex; flex-direction: column; gap: 10px; }
-    
-    .msg { max-width: 70%; padding: 10px 14px; border-radius: 8px; word-wrap: break-word; font-size: 14px; line-height: 1.5; position: relative; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
-    .msg.sys { margin: 10px auto; background: rgba(0,0,0,0.1); color: #666; font-size: 12px; border-radius: 100px; max-width: fit-content; padding: 4px 12px; box-shadow: none; }
-    .msg.me { align-self: flex-end; background: #e3f2fd; color: #0d47a1; border-top-right-radius: 2px; }
-    .msg.other { align-self: flex-start; background: #fff; border: 1px solid #e6e6e6; border-top-left-radius: 2px; }
-    
-    .sender-name { font-size: 12px; color: #999; margin-bottom: 4px; }
-    
-    #input-box { padding: 15px; border-top: 1px solid var(--border); display: flex; gap: 10px; background: #fff; }
-    #msg-input { margin: 0; border: 1px solid #ddd; }
-    #msg-input:focus { border-color: var(--primary); outline: none; }
-    #send-btn { width: auto; padding: 0 24px; font-weight: bold; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MsgRail · 聊天室</title>
+  <meta name="description" content="MsgRail 分布式消息推送系统 · 群聊演示" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='7' fill='%232563eb'/%3E%3Cpath d='M5 17V8l7 4.5L19 8v9' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="ui/tokens.css" />
+  <link rel="stylesheet" href="ui/base.css" />
+  <link rel="stylesheet" href="ui/chat.css" />
+  <script src="ui/theme.js"></script>
+  <script src="ui/icons.js"></script>
   <script src="auth.js"></script>
+  <script src="ui/user_profile.js"></script>
 </head>
-<body>
-  <div id="sidebar">
+<body class="chat-app">
+  <aside id="sidebar">
     <div class="sb-header">
-      <h2>Spark Chatroom</h2>
-      <small style="color:#999">群聊 / 直播间模式</small>
+      <a class="brand" href="chatroom.html" aria-label="MsgRail 聊天室">
+        <span class="brand-mark">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-logo"></use></svg>
+        </span>
+        <span class="brand-text">
+          <span class="brand-name">MsgRail</span>
+          <span class="brand-sub">分布式消息推送系统</span>
+        </span>
+      </a>
+      <button class="theme-toggle" type="button" data-theme-toggle aria-pressed="false" aria-label="切换到深色模式" title="切换到深色模式">
+        <svg class="mr-icon icon-sun" aria-hidden="true"><use href="#i-sun"></use></svg>
+        <svg class="mr-icon icon-moon" aria-hidden="true"><use href="#i-moon"></use></svg>
+      </button>
     </div>
-    
+
     <!-- 登录前 -->
     <div id="auth-box">
-      <div class="auth-tabs">
-        <button type="button" class="auth-tab active" data-mode="login">登录</button>
-        <button type="button" class="auth-tab" data-mode="register">注册</button>
+      <div class="auth-tabs" role="tablist" aria-label="登录或注册">
+        <button type="button" class="auth-tab active" data-mode="login" role="tab" aria-selected="true">登录</button>
+        <button type="button" class="auth-tab" data-mode="register" role="tab" aria-selected="false">注册</button>
       </div>
       <div class="form-group">
-        <input id="account" class="form-control" placeholder="账号" />
+        <input id="account" class="form-control" placeholder="账号" autocomplete="username" />
       </div>
       <div class="form-group hidden" id="nickname-group">
-        <input id="nickname" class="form-control" placeholder="昵称 (注册时可选)" />
+        <input id="nickname" class="form-control" placeholder="昵称（注册时可选）" />
       </div>
       <div class="form-group">
-        <input id="password" type="password" class="form-control" placeholder="密码" />
+        <input id="password" type="password" class="form-control" placeholder="密码" autocomplete="current-password" />
       </div>
       <button id="login-btn" class="btn-primary btn-block">立即登录</button>
       <button id="register-btn" class="btn-primary btn-block hidden">注册并自动登录</button>
-      <div id="status" class="status-text"></div>
+      <div id="status" class="status-text" role="status"></div>
+
+      <nav class="auth-links" aria-label="其他演示页面">
+        <a class="auth-link" href="index.html">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
+          <span>单聊消息中心</span>
+        </a>
+        <a class="auth-link" href="danmaku.html">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-video"></use></svg>
+          <span>视频弹幕</span>
+        </a>
+        <a class="auth-link" href="admin_chatroom.html">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-shield"></use></svg>
+          <span>管理后台</span>
+        </a>
+        <a class="auth-link" href="test.html">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-terminal"></use></svg>
+          <span>测试控制台</span>
+        </a>
+      </nav>
     </div>
-    
+
     <!-- 登录后 -->
     <div id="room-nav" class="hidden">
-       <div style="padding:10px; border-bottom:1px solid #eee;">
-          <div style="font-size:12px; color:#666; margin-bottom:4px;">加入新房间 (ID):</div>
-          <div style="display:flex; gap:4px;">
-            <input id="join-room-id" class="form-control" placeholder="1001" style="margin:0;">
-            <button id="join-btn" class="btn-primary" style="width:auto;">加入</button>
-          </div>
-       </div>
-       <div style="padding:10px 10px 0; font-size:12px; color:#999;">我的订阅列表:</div>
-       <div id="room-list" class="room-list"></div>
-       <div style="padding:10px; border-top:1px solid #eee; text-align:center;">
-          <span id="my-id" style="font-size:12px; color:#666; margin-right:10px;"></span>
-          <a href="#" onclick="doLogout()" style="font-size:12px; color:red;">退出</a>
-       </div>
+      <div class="room-toolbar">
+        <input id="join-room-id" class="form-control" placeholder="房间 ID，例如 1001" />
+        <button id="join-btn" class="btn-primary" type="button">加入</button>
+      </div>
+      <nav class="side-nav-links" aria-label="功能入口">
+        <a class="side-nav-link" href="index.html">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
+          <span>单聊消息</span>
+        </a>
+        <a class="side-nav-link" href="contacts.html">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-users"></use></svg>
+          <span>联系人</span>
+        </a>
+        <a class="side-nav-link" href="profile.html">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-spark"></use></svg>
+          <span>我的资料</span>
+        </a>
+      </nav>
+      <div class="room-section-label">
+        <span>我的订阅</span>
+        <span class="section-actions">
+          <span id="global-unread" class="unread-badge hidden">0</span>
+          <button id="refresh-rooms-btn" type="button">刷新</button>
+        </span>
+      </div>
+      <div id="room-list" class="room-list"></div>
+      <div class="room-footer">
+        <a class="mr-row profile-link" href="profile.html" title="编辑我的资料">
+          <div id="my-avatar" class="avatar-placeholder">Me</div>
+          <span id="my-id" class="room-user"></span>
+        </a>
+        <a href="#" class="logout-btn" onclick="doLogout(); return false;">退出</a>
+      </div>
     </div>
-  </div>
-  
-  <div id="main">
+  </aside>
+
+  <main id="main">
     <div id="header-bar">
-       <span id="room-title" style="font-weight:bold;">未选择房间</span>
-       <span id="online-count" style="font-size:12px; color:#666;"></span>
+      <div class="chat-title-group">
+        <span id="room-title">未选择房间</span>
+        <span class="chat-sub">群聊 / 直播间模式</span>
+      </div>
+      <span id="online-count">在线</span>
     </div>
     <div id="msgs">
-       <div style="text-align:center; margin-top:50px; color:#ccc;">请先在左侧加入或选择一个房间</div>
+      <div class="empty-hint">
+        <svg class="mr-icon" aria-hidden="true"><use href="#i-users"></use></svg>
+        <strong>选择一个房间开始聊天</strong>
+        <span>在左侧加入或选择房间，消息会实时抵达。</span>
+      </div>
     </div>
     <div id="input-box">
-       <input id="msg-input" class="form-control" placeholder="发送消息... (Enter)" style="margin:0;">
-       <button id="send-btn" class="btn-primary" style="width:100px;">发送</button>
+      <input id="msg-input" class="form-control" placeholder="输入消息，Enter 发送" />
+      <button id="send-btn" class="btn-primary" type="button">
+        <svg class="mr-icon" aria-hidden="true"><use href="#i-send"></use></svg>
+        <span>发送</span>
+      </button>
     </div>
-  </div>
+  </main>
 
   <script>
     const logicBase = window.location.protocol + '//' + window.location.hostname + ':9101';
@@ -121,12 +141,67 @@
     let ws=null, uid=null, token=null, myName=null, currentRoom=null, currentRoomName='';
     let wsReconnectTimer=null;
     let shouldReconnect=true;
+    let myProfile=null;
 
     // 构造带 Authorization 的请求头
     function authHeaders() {
       const h = {'Content-Type': 'application/json'};
       if (token) h['Authorization'] = 'Bearer ' + token;
       return h;
+    }
+
+    async function apiPost(path, payload) {
+      const res = await authenticatedFetch(logicBase + path, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(payload || {})
+      });
+      if (!res) return null;
+      let body = {};
+      try { body = await res.json(); } catch (e) { body = {}; }
+      if (!res.ok || body.code !== 0) {
+        const err = new Error(body.message || ('HTTP ' + res.status));
+        err.status = res.status;
+        throw err;
+      }
+      return body.data || {};
+    }
+
+    function setBadge(el, count) {
+      if (!el) return;
+      const n = Math.max(0, Number(count) || 0);
+      el.textContent = n > 99 ? '99+' : String(n);
+      el.classList.toggle('hidden', n <= 0);
+    }
+
+    async function refreshGlobalUnread() {
+      if (!uid || !token) return;
+      try {
+        const data = await apiPost('/api/session/unread_summary', {});
+        if (data) {
+          setBadge(document.getElementById('global-unread'), data.total);
+        }
+      } catch (e) {
+        console.warn('load unread summary failed', e);
+      }
+    }
+
+    async function loadSelfProfile() {
+      if (!uid || !token) return;
+      try {
+        const profile = await apiPost('/api/user/profile', {});
+        if (!profile) return;
+        myProfile = profile;
+        myName = profile.name || myName;
+        UserProfile.prime(profile);
+        UserProfile.applyAvatar(
+          document.getElementById('my-avatar'), profile, uid);
+        document.getElementById('my-id').textContent =
+          (myName || ('User ' + uid)) + ' · ' + uid;
+        Auth.set(uid, token, myName || ('User ' + uid));
+      } catch (e) {
+        console.warn('load self profile failed', e);
+      }
     }
 
     function handleTokenExpired() {
@@ -143,11 +218,13 @@
        uid = null;
        token = null;
        myName = null;
+       myProfile = null;
        currentRoom = null;
        currentRoomName = '';
        currentSessionId = null;
+       setBadge(document.getElementById('global-unread'), 0);
        document.getElementById('room-title').textContent = '未选择房间';
-       document.getElementById('msgs').innerHTML = '<div style="text-align:center; margin-top:50px; color:#ccc;">登录状态已失效，请重新登录</div>';
+       document.getElementById('msgs').innerHTML = '<div class="empty-hint"><strong>登录状态已失效</strong><span>请重新登录后继续聊天。</span></div>';
        document.getElementById('status').textContent = '登录状态已失效，请重新登录';
        toggleUI(false);
     }
@@ -174,8 +251,16 @@
        if(isLogin) {
           ab.classList.add('hidden');
           rn.classList.remove('hidden');
-          document.getElementById('my-id').textContent = `Uid: ${uid} (${myName||'User'})`;
-          
+          document.getElementById('my-id').textContent =
+            (myName || ('User ' + uid)) + ' · ' + uid;
+          if (myProfile) {
+            UserProfile.applyAvatar(
+              document.getElementById('my-avatar'), myProfile, uid);
+          } else {
+            UserProfile.applyAvatar(
+              document.getElementById('my-avatar'), null, uid);
+          }
+
           // 如果有 URL 参数 room_id，自动加入
           const params = new URLSearchParams(window.location.search);
           const rid = params.get('room_id');
@@ -186,8 +271,10 @@
                  joinRoom();
              }, 500);
           }
-          
+
           loadMyRooms();
+          loadSelfProfile();
+          refreshGlobalUnread();
        } else {
           ab.classList.remove('hidden');
           rn.classList.add('hidden');
@@ -284,29 +371,25 @@
                     else if (inner.text) text = inner.text;
                 }
                 if (!text) text = JSON.stringify(contentObj);
-                // 尝试获取发送者名字
-                let senderName = '有人';
-                
-                // 1. 优先从 contentObj 中找 (后端注入到 content_json)
-                if(contentObj.sender && contentObj.sender.name) {
-                   senderName = contentObj.sender.name;
-                } 
-                // 2. 其次看顶层 msg 是否有 sender (兼容性)
-                else if(msg.sender && msg.sender.name) {
-                   senderName = msg.sender.name;
-                }
-                // 3. 最后用 ID 兜底
-                else if (msg.from_user_id) {
-                   senderName = 'User ' + msg.from_user_id;
-                } else if (contentObj.from_user_id) {
-                   senderName = 'User ' + contentObj.from_user_id;
-                }
-                console.info('senderName', senderName);
+
+                const senderId = Number(msg.from_user_id ||
+                                        contentObj.from_user_id || 0);
+                const sender = msg.sender || contentObj.sender || null;
+                const senderName = (sender && sender.name) ||
+                                   (senderId ? ('User ' + senderId) : '有人');
+
                 // 只有当前选中的房间才显示 (简单Demo逻辑)
                 if(msg.group_id === currentRoom) {
-                   const isMe = (msg.from_user_id === uid);
-                   const timeStr = new Date(msg.timestamp_ms || Date.now()).toLocaleTimeString();
-                   appendMsg(text, isMe, senderName, false, timeStr);
+                   const isMe = (senderId === Number(uid));
+                   const timeStr = new Date(msg.create_time || msg.timestamp_ms ||
+                                            Date.now()).toLocaleTimeString();
+                   appendMsg(text, isMe, senderName, false, timeStr,
+                             { senderId, sender });
+                   if (!isMe) markRoomMessageRead(msg.msg_id, msg.msg_seq);
+                } else {
+                   // 其他房间收到消息：刷新未读角标。
+                   loadMyRooms();
+                   refreshGlobalUnread();
                 }
              } else if (msg.type === 'system_broadcast') {
                 // 处理系统广播（房间广播已由服务端 PushToRoom；此处按 group_id 过滤仅为展示兜底）
@@ -381,11 +464,23 @@
                 if (r.session_id) {
                   div.dataset.sessionId = r.session_id;
                 }
-                div.textContent = `${r.name} (${r.room_id})`;
+                div.innerHTML =
+                  '<span class="room-name"></span>' +
+                  '<span class="room-meta">' +
+                    '<span class="room-id"></span>' +
+                    '<span class="unread-badge hidden">0</span>' +
+                  '</span>';
+                div.querySelector('.room-name').textContent = r.name;
+                div.querySelector('.room-id').textContent = '#' + r.room_id;
+                setBadge(div.querySelector('.unread-badge'), r.unread);
                 div.onclick = () => selectRoom(r.room_id, r.name, div);
                 listDiv.appendChild(div);
              });
           }
+          if (!listDiv.children.length) {
+             listDiv.innerHTML = '<div class="session-empty">还没有订阅房间<br>输入房间 ID 加入</div>';
+          }
+          refreshGlobalUnread();
        } catch(e){
           console.error('loadMyRooms error', e);
        }
@@ -461,7 +556,64 @@
          if (token && currentRoom === selectedRoom) {
            appendMsg(`已进入 ${currentRoomName}`, true, '系统', true);
          }
+       }).finally(() => {
+         if (token && currentRoom === selectedRoom) {
+           markCurrentRoomRead();
+         }
        });
+    }
+
+    function seqFromMsgId(msgId) {
+       if (!msgId) return 0;
+       const idx = String(msgId).lastIndexOf('-');
+       if (idx < 0) return 0;
+       const n = Number(String(msgId).slice(idx + 1));
+       return Number.isFinite(n) ? n : 0;
+    }
+
+    // 正在看的房间收到消息时，直接推进读游标，不额外查一次 unread。
+    async function markRoomMessageRead(msgId, msgSeq) {
+       if (!currentSessionId || !token) return;
+       const sid = currentSessionId;
+       const seq = Number(msgSeq) || seqFromMsgId(msgId);
+       if (!seq) return;
+       try {
+          await apiPost('/api/session/mark_read',
+                        { session_id: sid, read_seq: seq });
+          if (currentSessionId === sid) {
+             const item = document.querySelector(
+               '.room-item[data-rid="' + currentRoom + '"]');
+             if (item) setBadge(item.querySelector('.unread-badge'), 0);
+          }
+          refreshGlobalUnread();
+       } catch (e) {
+          console.warn('mark room message read failed', e);
+       }
+    }
+
+    // 打开房间时把该会话全部标记已读。
+    async function markCurrentRoomRead() {
+       if (!currentSessionId || !token) return;
+       const sid = currentSessionId;
+       try {
+          const data = await apiPost('/api/session/unread',
+                                     { session_id: sid });
+          if (!data) return;
+          const seq = Number(data.last_msg_seq) || 0;
+          if (seq > 0) {
+             await apiPost('/api/session/mark_read',
+                           { session_id: sid, read_seq: seq });
+          }
+          if (currentSessionId === sid) {
+             const item = document.querySelector(
+               '.room-item[data-rid="' + currentRoom + '"]');
+             if (item) setBadge(item.querySelector('.unread-badge'), 0);
+             loadMyRooms();
+             refreshGlobalUnread();
+          }
+       } catch (e) {
+          console.warn('mark room read failed', e);
+       }
     }
 
     // 拉取当前聊天室的历史消息（分页）
@@ -529,22 +681,22 @@
               text = JSON.stringify(contentObj);
             }
 
-            // 发送者名称
-            let senderName = '有人';
-            if (contentObj.sender && contentObj.sender.name) {
-              senderName = contentObj.sender.name;
-            } else if (m.sender_id) {
-              senderName = 'User ' + m.sender_id;
-            }
+            // 发送者：优先使用后端批量补全的 sender 对象。
+            const sender = m.sender || contentObj.sender || null;
+            const senderId = Number(m.sender_id || 0);
+            const senderName = (sender && sender.name) ||
+                               (senderId ? ('User ' + senderId) : '有人');
 
-            const isMe = (m.sender_id === uid);
+            const isMe = (senderId === Number(uid));
             const timeStr = new Date(m.timestamp_ms || Date.now()).toLocaleTimeString();
 
             // 首次加载：直接追加；后续分页：插入顶部并保持滚动位置
             if (isInitial) {
-              appendMsg(text, isMe, senderName, false, timeStr);
+              appendMsg(text, isMe, senderName, false, timeStr,
+                        { senderId, sender });
             } else {
-              appendMsg(text, isMe, senderName, false, timeStr, { prepend: true, keepScroll: true });
+              appendMsg(text, isMe, senderName, false, timeStr,
+                        { prepend: true, keepScroll: true, senderId, sender });
             }
          });
 
@@ -581,25 +733,49 @@
           node.className = 'msg sys';
           node.textContent = text;
        } else {
+          const senderId = Number(opts.senderId) ||
+                           (isMe ? Number(uid) : 0);
+          const senderProfile = opts.sender || (isMe ? myProfile : null);
+          if (senderProfile && senderProfile.user_id) {
+             UserProfile.prime(senderProfile);
+          }
+          const fallbackName = name ||
+            (senderProfile && senderProfile.name) ||
+            (isMe ? (myName || '我')
+                  : (senderId ? ('User ' + senderId) : '有人'));
+
+          const row = document.createElement('div');
+          row.className = 'room-msg-row ' + (isMe ? 'me' : 'other');
+
+          const avatar = document.createElement('div');
+          avatar.className = 'msg-avatar room-msg-avatar';
+          UserProfile.applyAvatar(avatar, senderProfile, senderId);
+
           node = document.createElement('div');
           node.className = 'msg ' + (isMe ? 'me' : 'other');
 
           const sender = document.createElement('div');
           sender.className = 'sender-name';
-          sender.textContent = name || '有人';
-
+          const nameSpan = document.createElement('span');
+          nameSpan.textContent =
+            (senderProfile && senderProfile.name) || fallbackName;
           const time = document.createElement('span');
-          time.style.fontWeight = 'normal';
-          time.style.color = '#bbb';
-          time.style.fontSize = '10px';
-          time.style.marginLeft = '5px';
+          time.className = 'msg-time';
           time.textContent = timeStr || '';
+          sender.appendChild(nameSpan);
           sender.appendChild(time);
 
           const content = document.createElement('div');
           content.textContent = text;
           node.appendChild(sender);
           node.appendChild(content);
+
+          if (!senderProfile && senderId) {
+             UserProfile.hydrate(avatar, senderId, nameSpan, fallbackName);
+          }
+          row.appendChild(avatar);
+          row.appendChild(node);
+          node = row;
        }
 
        if (prepend && div.firstChild) {
@@ -622,6 +798,18 @@
        }
     };
     document.getElementById('join-btn').onclick = joinRoom;
+    document.getElementById('refresh-rooms-btn').onclick = () => {
+       loadMyRooms();
+       refreshGlobalUnread();
+    };
+
+    // 未读角标轮询：30 秒刷新一次房间列表与总未读。
+    setInterval(() => {
+       if (token && uid) {
+          loadMyRooms();
+          refreshGlobalUnread();
+       }
+    }, 30000);
 
     // 上滑到顶部时自动加载更多历史
     document.getElementById('msgs').addEventListener('scroll', function() {

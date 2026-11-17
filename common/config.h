@@ -82,6 +82,47 @@ struct Config {
 
     // CORS 允许的来源（默认 "*"，行为不变）。
     std::string cors_allow_origin;
+
+    // ---- 媒体对象存储（MinIO / S3，path-style） ----
+    // endpoint 供 Logic/worker 内部访问；public_endpoint 供浏览器直传/下载。
+    // 二者可以是同一个地址；部署到容器/公网时通常不同。
+    std::string s3_endpoint;
+    std::string s3_public_endpoint;
+    std::string s3_bucket;
+    std::string s3_access_key;
+    std::string s3_secret_key;
+    std::string s3_region;
+    int s3_presign_ttl_seconds{900};
+    bool s3_path_style{true};
+
+    // 单张图片 / 单个视频 / 单个文件限制与服务端处理参数。
+    int64_t media_max_image_bytes{20LL * 1024 * 1024};
+    int64_t media_max_video_bytes{100LL * 1024 * 1024};
+    int64_t media_max_file_bytes{50LL * 1024 * 1024};
+    int media_max_pixels{50000000};
+    int media_max_side{12000};
+    int64_t media_max_video_duration_ms{10LL * 60 * 1000};
+    int media_max_video_pixels{8294400};  // 3840 * 2160
+    int media_max_video_side{3840};
+    int media_video_poster_max_width{640};
+    int media_video_process_timeout_seconds{60};
+    int media_video_transcode_timeout_seconds{600};
+    int media_video_transcode_max_side{1920};
+    int media_video_transcode_crf{23};
+    std::string media_video_transcode_preset{"veryfast"};
+    std::string media_video_ffprobe_path{"ffprobe"};
+    std::string media_video_ffmpeg_path{"ffmpeg"};
+    std::string media_video_temp_dir{"/tmp"};
+    int media_download_url_ttl_seconds{900};
+    // 旧配置：图片/视频共用一个线程池。仅作为兼容 fallback。
+    int media_worker_threads{2};
+    // 图片和视频独立线程池。
+    int media_image_worker_threads{3};
+    int media_video_worker_threads{1};
+    int media_worker_poll_ms{500};
+    int media_task_max_attempts{3};
+    // 图片解码的并发内存预算（MiB）。<=0 表示不限制。
+    int media_memory_budget_mb{1024};
 };
 
 // 读取 key=value 配置文件并返回解析后的 Config。

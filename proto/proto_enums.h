@@ -38,6 +38,9 @@ inline MsgType MsgTypeFromString(const std::string& s) {
     if (s == "system") return MSG_TYPE_SYSTEM;
     if (s == "danmaku") return MSG_TYPE_DANMAKU;
     if (s == "broadcast") return MSG_TYPE_BROADCAST;
+    if (s == "image") return MSG_TYPE_IMAGE;
+    if (s == "file") return MSG_TYPE_FILE;
+    if (s == "video") return MSG_TYPE_VIDEO;
     return MSG_TYPE_UNSPECIFIED;
 }
 
@@ -51,6 +54,12 @@ inline const char* MsgTypeToString(MsgType v) {
             return "danmaku";
         case MSG_TYPE_BROADCAST:
             return "broadcast";
+        case MSG_TYPE_IMAGE:
+            return "image";
+        case MSG_TYPE_FILE:
+            return "file";
+        case MSG_TYPE_VIDEO:
+            return "video";
         default:
             return "";
     }

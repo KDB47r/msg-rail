@@ -66,6 +66,10 @@ TEST_CASE("文件不存在时返回全默认配置") {
     Config cfg = LoadConfig("/tmp/definitely_not_exist_sparkpush.conf");
     CHECK(cfg.listen_port == 9000);
     CHECK(cfg.http_port == 9001);  // 9000 + 1
+    CHECK(cfg.media_video_transcode_timeout_seconds == 600);
+    CHECK(cfg.media_video_transcode_max_side == 1920);
+    CHECK(cfg.media_video_transcode_crf == 23);
+    CHECK(cfg.media_video_transcode_preset == "veryfast");
 }
 
 TEST_CASE("注释行(#)与空行被忽略,不影响正常字段解析") {
@@ -118,4 +122,89 @@ TEST_CASE("行首尾空白与 key/value 周围空白被 Trim") {
     CHECK(cfg.listen_port == 9800);
     CHECK(cfg.redis_host == "10.0.0.1");
     std::remove(path.c_str());
+}
+
+TEST_CASE("视频配置项正常解析") {
+    std::string path = WriteTempConfig(
+        "media_max_video_bytes=209715200\n"
+        "media_max_video_duration_ms=300000\n"
+        "media_max_video_pixels=2073600\n"
+        "media_max_video_side=1920\n"
+        "media_video_poster_max_width=480\n"
+        "media_video_process_timeout_seconds=30\n"
+        "media_video_transcode_timeout_seconds=120\n"
+        "media_video_transcode_max_side=1280\n"
+        "media_video_transcode_crf=26\n"
+        "media_video_transcode_preset=fast\n"
+        "media_video_ffprobe_path=/opt/ffmpeg/bin/ffprobe\n"
+        "media_video_ffmpeg_path=/opt/ffmpeg/bin/ffmpeg\n"
+        "media_video_temp_dir=/var/tmp\n");
+    Config cfg = LoadConfig(path);
+    CHECK(cfg.media_max_video_bytes == 209715200);
+    CHECK(cfg.media_max_video_duration_ms == 300000);
+    CHECK(cfg.media_max_video_pixels == 2073600);
+    CHECK(cfg.media_max_video_side == 1920);
+    CHECK(cfg.media_video_poster_max_width == 480);
+    CHECK(cfg.media_video_process_timeout_seconds == 30);
+    CHECK(cfg.media_video_transcode_timeout_seconds == 120);
+    CHECK(cfg.media_video_transcode_max_side == 1280);
+    CHECK(cfg.media_video_transcode_crf == 26);
+    CHECK(cfg.media_video_transcode_preset == "fast");
+    CHECK(cfg.media_video_ffprobe_path == "/opt/ffmpeg/bin/ffprobe");
+    CHECK(cfg.media_video_ffmpeg_path == "/opt/ffmpeg/bin/ffmpeg");
+    CHECK(cfg.media_video_temp_dir == "/var/tmp");
+    std::remove(path.c_str());
+}
+
+TEST_CASE("media_memory_budget_mb 默认与解析") {
+    Config defaults;
+    CHECK(defaults.media_memory_budget_mb == 1024);
+
+    std::string path = WriteTempConfig("media_memory_budget_mb=512\n");
+    Config cfg = LoadConfig(path);
+    CHECK(cfg.media_memory_budget_mb == 512);
+    std::remove(path.c_str());
+}
+
+TEST_CASE("媒体 worker 线程数：新配置与旧配置兼容") {
+    {
+        Config cfg;
+        CHECK(cfg.media_image_worker_threads == 3);
+        CHECK(cfg.media_video_worker_threads == 1);
+    }
+    {
+        std::string path = WriteTempConfig(
+            "media_image_worker_threads=4\n"
+            "media_video_worker_threads=2\n");
+        Config cfg = LoadConfig(path);
+        CHECK(cfg.media_image_worker_threads == 4);
+        CHECK(cfg.media_video_worker_threads == 2);
+        std::remove(path.c_str());
+    }
+    {
+        std::string path = WriteTempConfig("media_worker_threads=2\n");
+        Config cfg = LoadConfig(path);
+        CHECK(cfg.media_image_worker_threads == 2);
+        CHECK(cfg.media_video_worker_threads == 1);
+        std::remove(path.c_str());
+    }
+    {
+        std::string path = WriteTempConfig(
+            "media_worker_threads=2\n"
+            "media_image_worker_threads=4\n"
+            "media_video_worker_threads=2\n");
+        Config cfg = LoadConfig(path);
+        CHECK(cfg.media_image_worker_threads == 4);
+        CHECK(cfg.media_video_worker_threads == 2);
+        std::remove(path.c_str());
+    }
+    {
+        std::string path = WriteTempConfig(
+            "media_image_worker_threads=0\n"
+            "media_video_worker_threads=-1\n");
+        Config cfg = LoadConfig(path);
+        CHECK(cfg.media_image_worker_threads == 1);
+        CHECK(cfg.media_video_worker_threads == 1);
+        std::remove(path.c_str());
+    }
 }

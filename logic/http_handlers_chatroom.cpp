@@ -48,6 +48,16 @@ void HttpApiServer::handleChatroomList(const HttpRequest& req,
             LogError("GetOrCreateRoomSession failed: " + err);
             continue;
         }
+        int64_t unread = 0;
+        if (!store_->GetUnread(user_id, s.id, &unread, &err)) {
+            WriteError(resp, 500, "get room unread failed: " + err);
+            return;
+        }
+        int64_t last_seq = s.last_msg_seq;
+        if (!store_->GetLastSeq(s.id, &last_seq, &err)) {
+            LogWarn("GetLastSeq failed for " + s.id + ": " + err);
+            last_seq = s.last_msg_seq;
+        }
 
         ImGroup g;
         std::string g_err;
@@ -59,7 +69,8 @@ void HttpApiServer::handleChatroomList(const HttpRequest& req,
         data["rooms"].push_back({{"session_id", s.id},
                                  {"room_id", s.group_id},
                                  {"name", name},
-                                 {"last_msg_seq", s.last_msg_seq}});
+                                 {"last_msg_seq", last_seq},
+                                 {"unread", unread}});
     }
     WriteJson(resp, 0, "ok", data.dump());
 }
@@ -112,6 +123,23 @@ void HttpApiServer::handleChatroomJoin(const HttpRequest& req,
     if (!group_member_dao_->AddOrUpdateMember(room_id, user_id, 0, &err)) {
         WriteError(resp, 500, "add member failed: " + err);
         return;
+    }
+
+    // 加入时把已读游标推进到当前最新序号，避免把入群前的历史算成未读。
+    // AddOrUpdateMember 是幂等的，重复加入不会重置已有成员关系。
+    if (store_) {
+        Session session;
+        if (!store_->GetOrCreateRoomSession(room_id, &session, &err)) {
+            WriteError(resp, 500, "open room session failed: " + err);
+            return;
+        }
+        if (session.last_msg_seq > 0) {
+            if (!store_->MarkRead(user_id, session.id, session.last_msg_seq,
+                                  &err)) {
+                WriteError(resp, 500, "init room read seq failed: " + err);
+                return;
+            }
+        }
     }
 
     WriteJson(resp, 0, "ok");

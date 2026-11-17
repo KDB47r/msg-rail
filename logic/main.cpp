@@ -8,14 +8,18 @@
 #include "config.h"
 #include "conversation_store.h"
 #include "danmaku_dao.h"
+#include "friend_dao.h"
+#include "friend_service.h"
 #include "group_dao.h"
 #include "grpc_service.h"
 #include "http_server.h"
 #include "kafka_producer.h"
 #include "logging.h"
+#include "media_dao.h"
 #include "message_dao.h"
 #include "mysql_pool.h"
 #include "redis_pool.h"
+#include "s3_client.h"
 #include "redis_store.h"
 #include "session_dao.h"
 #include "signal_handler.h"
@@ -103,7 +107,9 @@ int RunLogic(const Config& cfg) {
         return 1;
     }
     UserDao user_dao(&mysql_pool);
+    FriendDao friend_dao(&mysql_pool);
     DanmakuDao danmaku_dao(&mysql_pool);
+    MediaDao media_dao(&mysql_pool);
     GroupDao group_dao(&mysql_pool);
     GroupMemberDao group_member_dao(&mysql_pool);
     SessionDao session_dao(&mysql_pool);
@@ -130,6 +136,24 @@ int RunLogic(const Config& cfg) {
         return 1;
     }
     RedisStore redis_store(&redis_pool);
+    FriendService friend_service(&friend_dao, &redis_store);
+
+    // 媒体对象存储客户端。MinIO 未启动时 Init 仍可成功（只解析 endpoint），
+    // 真正上传/查询时才暴露连接错误；配置非法则记录告警并让媒体接口返回 503。
+    S3Config s3_cfg;
+    s3_cfg.endpoint = cfg.s3_endpoint;
+    s3_cfg.public_endpoint = cfg.s3_public_endpoint;
+    s3_cfg.bucket = cfg.s3_bucket;
+    s3_cfg.access_key = cfg.s3_access_key;
+    s3_cfg.secret_key = cfg.s3_secret_key;
+    s3_cfg.region = cfg.s3_region;
+    s3_cfg.presign_ttl_seconds = cfg.s3_presign_ttl_seconds;
+    s3_cfg.path_style = cfg.s3_path_style;
+    S3Client s3_client;
+    std::string s3_err;
+    if (!s3_client.Init(s3_cfg, &s3_err)) {
+        LogWarn("S3 client init failed, media APIs will return 503: " + s3_err);
+    }
 
     ConversationStore conversation_store(&session_dao, &message_dao, &state_dao,
                                          &redis_store);
@@ -152,8 +176,8 @@ int RunLogic(const Config& cfg) {
     grpc::ServerBuilder builder;
 
     auto service = std::make_unique<LogicServiceImpl>(
-        &conversation_store, &group_member_dao, &user_dao, &producer,
-        &broadcast_producer, &redis_store);
+        &conversation_store, &group_member_dao, &user_dao, &friend_service,
+        &producer, &broadcast_producer, &redis_store);
 
     builder.AddListeningPort(grpc_addr, grpc::InsecureServerCredentials());
     builder.RegisterService(service.get());
@@ -181,9 +205,10 @@ int RunLogic(const Config& cfg) {
         └──────────────────────┴────────────────┴──────────────────────────┴──────────────┘
     */
     HttpApiServer httpServer(static_cast<uint16_t>(cfg.http_port),
-                             &conversation_store, &user_dao, &group_dao,
-                             &group_member_dao, &redis_store, &producer,
-                             &broadcast_producer, &danmaku_dao, cfg);
+                             &conversation_store, &user_dao, &friend_service,
+                             &group_dao, &group_member_dao, &redis_store,
+                             &producer, &broadcast_producer, &danmaku_dao,
+                             &media_dao, &s3_client, cfg);
     httpServer.setThreadNum(cfg.http_threads);
     LogInfo("Logic HTTP server listening on port " +
             std::to_string(cfg.http_port) + " with " +

@@ -6,10 +6,15 @@ add_executable(logic_server
   http_server.cpp
   http_handlers_auth.cpp
   http_handlers_message.cpp
+  http_handlers_user.cpp
+  http_handlers_friend.cpp
   http_handlers_chatroom.cpp
   http_handlers_danmaku.cpp
   http_handlers_admin.cpp
+  http_handlers_media.cpp
   user_dao.cpp
+  friend_dao.cpp
+  friend_service.cpp
   redis_store.cpp
   danmaku_dao.cpp
   group_dao.cpp
@@ -27,6 +32,8 @@ target_link_libraries(logic_server
     spark_push_kafka
     spark_push_http
     spark_push_proto
+    spark_push_media
+    spark_push_s3
     pthread
 )
 

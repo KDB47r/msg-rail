@@ -2,245 +2,107 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <title>弹幕 - Spark Push</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📺</text></svg>">
-  <link rel="stylesheet" href="auth_style.css">
-  <style>
-    :root {
-      --primary-color: #1976d2;
-    }
-    body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      background: #0a0a0a;
-      color: #fff;
-      display: flex;
-      flex-direction: column;
-      height: 100vh;
-    }
-    header {
-      padding: 12px 24px;
-      background: #1a1a1a;
-      border-bottom: 1px solid #333;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    header h2 { margin: 0; font-size: 18px; color: #4fc3f7; }
-    header a { color: #888; text-decoration: none; font-size: 14px; }
-    header a:hover { color: #fff; }
-
-    #main {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 20px;
-    }
-
-    #video-wrap {
-      position: relative;
-      width: 960px;
-      max-width: 100%;
-      background: #000;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-      border-radius: 4px;
-      overflow: hidden;
-    }
-    video { width: 100%; display: block; }
-    #danmaku-layer {
-      pointer-events: none;
-      position: absolute;
-      top: 0; left: 0; width: 100%; height: 100%;
-      overflow: hidden;
-    }
-    .danmaku-item {
-      position: absolute;
-      white-space: nowrap;
-      color: #fff;
-      font-size: 20px;
-      font-weight: bold;
-      text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
-      will-change: transform;
-      animation: danmaku-move 8s linear forwards;
-    }
-    @keyframes danmaku-move {
-      from { transform: translateX(100%); }
-      to { transform: translateX(-100%); }
-    }
-
-    /* 控制区 */
-    .controls-container {
-      width: 960px;
-      max-width: 100%;
-      margin-top: 16px;
-      background: #1f1f1f;
-      padding: 16px;
-      border-radius: 6px;
-      box-sizing: border-box;
-      display: flex;
-      align-items: center;
-      min-height: 70px;
-    }
-
-    /* 登录前 */
-    #guest-panel {
-      flex: 1;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    /* 登录后 */
-    #user-panel {
-      flex: 1;
-      display: flex;
-      gap: 12px;
-      align-items: center;
-    }
-    #dm-input { 
-      flex: 1; 
-      background: #2b2b2b;
-      border: 1px solid #444;
-      color: #fff;
-      padding: 10px 12px;
-      border-radius: 6px;
-      outline: none;
-    }
-    #dm-input:focus { border-color: var(--primary-color); }
-    
-    .hidden { display: none !important; }
-    
-    /* 通用按钮 */
-    .btn {
-      background: var(--primary-color);
-      color: #fff;
-      border: none;
-      padding: 8px 20px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-weight: 500;
-      font-size: 14px;
-    }
-    .btn:hover { background: #1565c0; }
-    
-    /* Modal Styles */
-    .modal-overlay {
-      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-      background: rgba(0,0,0,0.7);
-      z-index: 1000;
-      display: flex; justify-content: center; align-items: center;
-    }
-    .modal {
-      background: #fff;
-      color: #333;
-      width: 360px;
-      border-radius: 8px;
-      overflow: hidden;
-      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
-    }
-    .modal-header {
-      padding: 0;
-      display: flex;
-      border-bottom: 1px solid #eee;
-    }
-    .modal-tab {
-      flex: 1;
-      padding: 15px;
-      text-align: center;
-      cursor: pointer;
-      background: #f5f5f5;
-      font-weight: bold;
-      color: #666;
-    }
-    .modal-tab.active {
-      background: #fff;
-      color: var(--primary-color);
-      border-top: 3px solid var(--primary-color);
-    }
-    .modal-body { padding: 25px; }
-    .form-group { margin-bottom: 15px; }
-    .form-input {
-      width: 100%;
-      padding: 10px;
-      border: 1px solid #ddd;
-      border-radius: 6px;
-      box-sizing: border-box;
-      font-size: 14px;
-    }
-    .form-input:focus { border-color: var(--primary-color); outline: none; }
-    .btn-block { width: 100%; padding: 12px; font-size: 16px; margin-top: 10px; }
-    .close-modal {
-      position: absolute;
-      top: 20px; right: 20px;
-      color: #fff;
-      font-size: 30px;
-      cursor: pointer;
-      line-height: 1;
-    }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MsgRail · 视频弹幕</title>
+  <meta name="description" content="MsgRail 分布式消息推送系统 · 视频弹幕演示" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='7' fill='%232563eb'/%3E%3Cpath d='M5 17V8l7 4.5L19 8v9' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="ui/tokens.css" />
+  <link rel="stylesheet" href="ui/base.css" />
+  <link rel="stylesheet" href="ui/danmaku.css" />
+  <script src="ui/theme.js"></script>
+  <script src="ui/icons.js"></script>
   <script src="auth.js"></script>
 </head>
-<body>
-  <header>
-    <h2>Spark 弹幕演示</h2>
-    <a href="index.html">← 返回首页</a>
+<body class="dm-app">
+  <header class="dm-header">
+    <a class="brand" href="index.html" aria-label="MsgRail 消息中心">
+      <span class="brand-mark">
+        <svg class="mr-icon" aria-hidden="true"><use href="#i-logo"></use></svg>
+      </span>
+      <span class="brand-text">
+        <span class="brand-name">MsgRail</span>
+        <span class="brand-sub">分布式消息推送系统</span>
+      </span>
+    </a>
+    <div class="dm-header-actions">
+      <a class="dm-back" href="index.html">
+        <svg class="mr-icon" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
+        <span>返回消息中心</span>
+      </a>
+      <button class="theme-toggle" type="button" data-theme-toggle aria-pressed="false" aria-label="切换到深色模式" title="切换到深色模式">
+        <svg class="mr-icon icon-sun" aria-hidden="true"><use href="#i-sun"></use></svg>
+        <svg class="mr-icon icon-moon" aria-hidden="true"><use href="#i-moon"></use></svg>
+      </button>
+    </div>
   </header>
 
-  <div id="main">
+  <main class="dm-main">
     <div id="video-wrap">
-      <video id="video" controls>
+      <video id="video" controls playsinline preload="metadata">
         <source src="demo.mp4" type="video/mp4" />
       </video>
-      <div id="danmaku-layer"></div>
+      <div id="danmaku-layer" aria-hidden="true"></div>
+      <div class="dm-stage-meta" aria-hidden="true">
+        <span class="mr-pill"><span class="mr-dot"></span>ROOM 1001 · LIVE</span>
+        <span class="dm-stage-title">Danmaku Rail</span>
+      </div>
     </div>
 
     <div class="controls-container">
       <!-- 1. 登录前 -->
       <div id="guest-panel">
-         <span style="margin-right: 15px; color: #aaa;">登录后发送弹幕</span>
-         <button class="btn" onclick="openAuthModal()">登录 / 注册</button>
+        <span class="guest-copy">登录后发送弹幕，和其他观众一起上轨。</span>
+        <button class="mr-btn mr-btn-primary" type="button" onclick="openAuthModal()">登录 / 注册</button>
       </div>
 
       <!-- 2. 登录后 -->
       <div id="user-panel" class="hidden">
-         <div style="display:flex; flex-direction:column; margin-right:10px; min-width: 80px;">
-           <span style="font-size:12px; color:#888;">当前用户</span>
-           <span id="current-user-disp" style="font-size:14px; font-weight:bold; color:#4fc3f7;">-</span>
-         </div>
-         <input id="dm-input" placeholder="输入弹幕内容，回车发射..." />
-         <button class="btn" id="send-dm-btn">🚀 发送弹幕</button>
-         <button class="btn" style="background:#424242; margin-left:10px;" onclick="doLogout()">退出</button>
+        <div class="dm-user">
+          <span class="dm-user-label">当前用户</span>
+          <span id="current-user-disp">-</span>
+        </div>
+        <input id="dm-input" placeholder="输入弹幕内容，Enter 发射" />
+        <button class="mr-btn mr-btn-primary" type="button" id="send-dm-btn">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-send"></use></svg>
+          <span>发送弹幕</span>
+        </button>
+        <button class="mr-btn mr-btn-secondary" type="button" onclick="doLogout()">退出</button>
       </div>
     </div>
-    
-    <div style="width:960px; max-width:100%; margin-top:10px; color:#555; font-size:12px; line-height:1.5;">
-       💡 提示：本页面模拟了视频网站的弹幕功能。登录后会连接 WebSocket 并自动加入 room_id=1001。
+
+    <div class="dm-hint">
+      <svg class="mr-icon" aria-hidden="true"><use href="#i-spark"></use></svg>
+      <span>本页面模拟视频弹幕：登录后会连接 WebSocket 并自动加入 room_id=1001，弹幕按时间片预加载。</span>
     </div>
-  </div>
+  </main>
 
   <!-- Login Modal -->
-  <div id="auth-modal" class="modal-overlay hidden">
-    <div class="close-modal" onclick="closeAuthModal()">×</div>
-    <div class="modal" onclick="event.stopPropagation()">
-       <div style="padding: 25px;">
-          <div class="auth-tabs">
-            <button type="button" class="auth-tab active" data-mode="login">登录</button>
-            <button type="button" class="auth-tab" data-mode="register">注册</button>
-          </div>
-          <div class="form-group">
-             <input id="auth-account" class="form-control" placeholder="账号">
-          </div>
-          <div class="form-group hidden" id="group-nickname">
-             <input id="auth-nickname" class="form-control" placeholder="昵称">
-          </div>
-          <div class="form-group">
-             <input id="auth-password" type="password" class="form-control" placeholder="密码">
-          </div>
-          <button id="login-btn" class="btn-primary btn-block">立即登录</button>
-          <button id="register-btn" class="btn-primary btn-block hidden">注册并自动登录</button>
-          <div id="auth-msg" class="status-text"></div>
-       </div>
+  <div id="auth-modal" class="mr-overlay hidden">
+    <div class="mr-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" onclick="event.stopPropagation()">
+      <div class="mr-modal-header">
+        <span class="mr-modal-title" id="auth-modal-title">登录 MsgRail</span>
+        <button class="mr-close" type="button" onclick="closeAuthModal()" aria-label="关闭">
+          <svg class="mr-icon" aria-hidden="true"><use href="#i-close"></use></svg>
+        </button>
+      </div>
+      <div class="mr-modal-body">
+        <div class="auth-tabs" role="tablist" aria-label="登录或注册">
+          <button type="button" class="auth-tab active" data-mode="login" role="tab" aria-selected="true">登录</button>
+          <button type="button" class="auth-tab" data-mode="register" role="tab" aria-selected="false">注册</button>
+        </div>
+        <div class="form-group">
+          <input id="auth-account" class="form-control" placeholder="账号" autocomplete="username" />
+        </div>
+        <div class="form-group hidden" id="group-nickname">
+          <input id="auth-nickname" class="form-control" placeholder="昵称" />
+        </div>
+        <div class="form-group">
+          <input id="auth-password" type="password" class="form-control" placeholder="密码" autocomplete="current-password" />
+        </div>
+        <button id="login-btn" class="btn-primary btn-block">立即登录</button>
+        <button id="register-btn" class="btn-primary btn-block hidden">注册并自动登录</button>
+        <div id="auth-msg" class="status-text" role="status"></div>
+      </div>
     </div>
   </div>
 
@@ -358,8 +220,12 @@
       el.className = 'danmaku-item';
       el.textContent = text;
       const layerH = danmakuLayer.clientHeight || 300;
-      const top = Math.floor(Math.random() * (layerH - 30)); 
+      const laneMax = Math.max(0, layerH - 40);
+      const top = Math.floor(Math.random() * laneMax);
       el.style.top = top + 'px';
+      // 用图层宽度计算完整横穿距离，速度略带随机，避免所有弹幕重叠。
+      el.style.setProperty('--dm-distance', (danmakuLayer.clientWidth || 960) + 'px');
+      el.style.animationDuration = (7 + Math.random() * 3.5).toFixed(2) + 's';
       el.addEventListener('animationend', () => el.remove());
       danmakuLayer.appendChild(el);
     }
