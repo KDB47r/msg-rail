@@ -227,8 +227,10 @@ ws://127.0.0.1:9200/ws?token=<token>
 
 ## 图片上传与异步处理性能优化
 
-测试环境：WSL Ubuntu 22.04，16 核，17GiB 内存；真实图片来自 `tests/data/`。
+测试环境：WSL Ubuntu 22.04，16 核，17GiB 内存；真实图片来自本地 `tests/data/`。
 图片处理数据用 `image_pipeline_bench --process-only` 测量（一次一张图、独立进程）；上传 E2E 用 `tests/media_upload_bench.py` 走真实 HTTP + MinIO + media_worker。
+
+> `tests/data/` 中的大图只保留在本地，已从 Git 跟踪中移除；复现 benchmark 时需自行准备测试图片。
 
 ### 优化项
 

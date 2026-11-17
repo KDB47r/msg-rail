@@ -48,3 +48,5 @@ CLAUDE.md
 .claude/
 
 *.tar.gz
+# Large local test media (not committed)
+tests/data/
