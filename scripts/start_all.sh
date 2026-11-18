@@ -35,6 +35,8 @@ MINIO_ROOT_USER="${MINIO_ROOT_USER:-minioadmin}"
 MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-minioadmin}"
 MINIO_API_CORS_ALLOW_ORIGIN="${MINIO_API_CORS_ALLOW_ORIGIN:-*}"
 S3_BUCKET="${S3_BUCKET:-sparkpush-media}"
+# 1=只公开 micro/thumb/preview/poster；0=整个 bucket 私有（CDN URL 会 403）
+MEDIA_VARIANT_PUBLIC="${MEDIA_VARIANT_PUBLIC:-1}"
 
 log_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
@@ -207,7 +209,22 @@ setup_minio_bucket() {
     mc alias set sparkpush-local "http://127.0.0.1:$MINIO_PORT" \
         "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1 || true
     mc mb --ignore-existing "sparkpush-local/$S3_BUCKET" >/dev/null 2>&1 || true
-    mc anonymous set none "sparkpush-local/$S3_BUCKET" >/dev/null 2>&1 || true
+    local policy_template="$CONF_DIR/minio_variant_public_policy.json.template"
+    if [ "$MEDIA_VARIANT_PUBLIC" = "1" ] && [ -f "$policy_template" ]; then
+        local policy_file
+        policy_file="$(mktemp)"
+        sed "s|__BUCKET__|$S3_BUCKET|g" "$policy_template" > "$policy_file"
+        if mc anonymous set-json "$policy_file" \
+            "sparkpush-local/$S3_BUCKET" >/dev/null 2>&1; then
+            log_info "MinIO 变体匿名只读策略已启用: micro/thumb/preview/poster"
+        else
+            log_warn "MinIO 变体匿名只读策略设置失败，CDN URL 可能返回 403"
+        fi
+        rm -f "$policy_file"
+    else
+        mc anonymous set none "sparkpush-local/$S3_BUCKET" >/dev/null 2>&1 || true
+        log_info "MinIO bucket 保持私有: $S3_BUCKET"
+    fi
     # MinIO OSS 不实现 S3 PutBucketCors，mc cors set 会返回 NotImplemented。
     # 浏览器直传 CORS 由启动参数 MINIO_API_CORS_ALLOW_ORIGIN 控制。
     log_info "MinIO bucket 就绪: $S3_BUCKET"

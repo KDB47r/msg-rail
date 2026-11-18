@@ -20,6 +20,10 @@ class MediaDao {
     bool GetById(const std::string& media_id, MediaObject* media,
                  std::string* err);
 
+    // 批量查询；内部按 100 个 ID 分块，避免超大 IN。
+    bool GetByIds(const std::vector<std::string>& media_ids,
+                  std::vector<MediaObject>* media, std::string* err);
+
     // complete 阶段：对象 HEAD 成功后更新真实大小/ETag 并标记 uploaded。
     bool MarkUploaded(const std::string& media_id, int64_t size_bytes,
                       const std::string& etag, std::string* err);
@@ -34,6 +38,10 @@ class MediaDao {
 
     bool ListVariants(const std::string& media_id,
                       std::vector<MediaVariant>* variants, std::string* err);
+
+    bool ListVariantsByMediaIds(const std::vector<std::string>& media_ids,
+                                std::vector<MediaVariant>* variants,
+                                std::string* err);
 
     // 发送消息时把媒体绑定到会话/消息。bound=false 表示条件不满足（已绑定/非 owner）。
     bool BindToMessage(const std::string& media_id, int64_t owner_id,
@@ -70,6 +78,27 @@ class MediaDao {
                   bool* terminal, std::string* err);
 
     bool RecoverStaleRunningTasks(int stale_seconds, std::string* err);
+
+    // ---- 视频 multipart 上传会话 ----
+    // 一行对应一个 media_id 的一次 S3 multipart upload。
+    bool CreateMultipartSession(const MultipartUploadSession& session,
+                                std::string* err);
+    bool GetMultipartSession(const std::string& media_id,
+                             MultipartUploadSession* out, bool* found,
+                             std::string* err);
+    bool DeleteMultipartSession(const std::string& media_id,
+                                std::string* err);
+    // 返回所有过期会话；清理方按 media.status 决定 abort 还是只删会话行。
+    bool ListExpiredMultipartSessions(
+        int limit, std::vector<MultipartUploadSession>* out,
+        std::string* err);
+
+    // 软删除 init 媒体（cleanup/abort 用）。
+    bool MarkDeleted(const std::string& media_id, std::string* err);
+
+    // 没有 multipart 会话、长期停留在 init 的单次 PUT 孤儿媒体。
+    bool ListStaleInitMedia(int64_t created_before_seconds, int limit,
+                            std::vector<MediaObject>* out, std::string* err);
 
    private:
     MySqlConnectionPool* pool_{nullptr};

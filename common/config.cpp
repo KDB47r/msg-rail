@@ -135,6 +135,19 @@ Config LoadConfig(const std::string& path) {
     cfg.media_worker_poll_ms = 500;
     cfg.media_task_max_attempts = 3;
     cfg.media_memory_budget_mb = 1024;
+    cfg.media_cache_enabled = true;
+    cfg.media_cache_ready_ttl_seconds = 600;
+    cfg.media_cache_failed_ttl_seconds = 60;
+    cfg.media_cache_pending_ttl_seconds = 1;
+    cfg.media_variant_cdn_base_url.clear();
+    cfg.media_variant_cache_control =
+        "public, max-age=31536000, immutable";
+    cfg.media_multipart_part_size_bytes = 8LL * 1024 * 1024;
+    cfg.media_multipart_upload_ttl_seconds = 86400;
+    cfg.media_upload_url_ttl_seconds = 900;
+    cfg.media_multipart_cleanup_interval_seconds = 3600;
+    cfg.media_multipart_cleanup_batch = 100;
+    cfg.media_upload_orphan_ttl_seconds = 86400;
     // 日志级别默认 INFO(2)。
     cfg.log_level = 2;
 
@@ -250,6 +263,9 @@ Config LoadConfig(const std::string& path) {
             cfg.job_max_inflight = ParseIntOr(key, value, cfg.job_max_inflight);
         else if (key == "http_threads")
             cfg.http_threads = ParseIntOr(key, value, cfg.http_threads);
+        else if (key == "http_worker_threads")
+            cfg.http_worker_threads =
+                ParseIntOr(key, value, cfg.http_worker_threads);
         else if (key == "admin_account")
             cfg.admin_account = value;
         else if (key == "admin_password_hash")
@@ -345,6 +361,39 @@ Config LoadConfig(const std::string& path) {
         else if (key == "media_memory_budget_mb")
             cfg.media_memory_budget_mb =
                 ParseIntOr(key, value, cfg.media_memory_budget_mb);
+        else if (key == "media_cache_enabled")
+            cfg.media_cache_enabled = (value == "true" || value == "1");
+        else if (key == "media_cache_ready_ttl_seconds")
+            cfg.media_cache_ready_ttl_seconds = ParseIntOr(
+                key, value, cfg.media_cache_ready_ttl_seconds);
+        else if (key == "media_cache_failed_ttl_seconds")
+            cfg.media_cache_failed_ttl_seconds = ParseIntOr(
+                key, value, cfg.media_cache_failed_ttl_seconds);
+        else if (key == "media_cache_pending_ttl_seconds")
+            cfg.media_cache_pending_ttl_seconds = ParseIntOr(
+                key, value, cfg.media_cache_pending_ttl_seconds);
+        else if (key == "media_variant_cdn_base_url")
+            cfg.media_variant_cdn_base_url = value;
+        else if (key == "media_variant_cache_control")
+            cfg.media_variant_cache_control = value;
+        else if (key == "media_multipart_part_size_bytes")
+            cfg.media_multipart_part_size_bytes = ParseInt64Or(
+                key, value, cfg.media_multipart_part_size_bytes);
+        else if (key == "media_multipart_upload_ttl_seconds")
+            cfg.media_multipart_upload_ttl_seconds = ParseIntOr(
+                key, value, cfg.media_multipart_upload_ttl_seconds);
+        else if (key == "media_upload_url_ttl_seconds")
+            cfg.media_upload_url_ttl_seconds = ParseIntOr(
+                key, value, cfg.media_upload_url_ttl_seconds);
+        else if (key == "media_multipart_cleanup_interval_seconds")
+            cfg.media_multipart_cleanup_interval_seconds = ParseIntOr(
+                key, value, cfg.media_multipart_cleanup_interval_seconds);
+        else if (key == "media_multipart_cleanup_batch")
+            cfg.media_multipart_cleanup_batch = ParseIntOr(
+                key, value, cfg.media_multipart_cleanup_batch);
+        else if (key == "media_upload_orphan_ttl_seconds")
+            cfg.media_upload_orphan_ttl_seconds = ParseIntOr(
+                key, value, cfg.media_upload_orphan_ttl_seconds);
         else if (key == "log_level")
             cfg.log_level = ParseLogLevelOr(value, cfg.log_level);
         else {

@@ -67,6 +67,8 @@ struct Config {
 
     // Logic HTTP 服务器 IO 线程数（0=单线程，N=N个工作线程）
     int http_threads{4};
+    // Logic HTTP 业务线程池大小；阻塞 DB/Redis/S3 handler 在这里执行。
+    int http_worker_threads{8};
 
     // 预设管理员凭据（默认值等于历史硬编码值，保证不配置时行为完全不变）。
     //   账号：admin，密码明文：admin，MD5：0192023a7bbd73250516f069df18b500
@@ -123,6 +125,27 @@ struct Config {
     int media_task_max_attempts{3};
     // 图片解码的并发内存预算（MiB）。<=0 表示不限制。
     int media_memory_budget_mb{1024};
+
+    // 媒体元数据 Redis 缓存。ready 基本不可变，处理中只缓存极短时间。
+    bool media_cache_enabled{true};
+    int media_cache_ready_ttl_seconds{600};
+    int media_cache_failed_ttl_seconds{60};
+    int media_cache_pending_ttl_seconds{1};
+    // 缩略图/预览图/视频封面的 CDN 前缀；为空时继续使用预签名 URL。
+    // 例：http://127.0.0.1:9002/sparkpush-media 或 https://cdn.example.com/bucket
+    std::string media_variant_cdn_base_url;
+    // 公开变体上传时写入对象元数据的 Cache-Control。
+    std::string media_variant_cache_control{
+        "public, max-age=31536000, immutable"};
+
+    // 视频 multipart 上传：分片大小、上传会话 TTL、分片 URL TTL。
+    int64_t media_multipart_part_size_bytes{8LL * 1024 * 1024};
+    int media_multipart_upload_ttl_seconds{86400};
+    int media_upload_url_ttl_seconds{900};
+    // media_worker 清理过期上传的周期/批量，以及 init 孤儿媒体 TTL。
+    int media_multipart_cleanup_interval_seconds{3600};
+    int media_multipart_cleanup_batch{100};
+    int media_upload_orphan_ttl_seconds{86400};
 };
 
 // 读取 key=value 配置文件并返回解析后的 Config。

@@ -1,6 +1,7 @@
 // HttpApiServer 媒体域 handler：图片/普通文件直传初始化、确认上传、查询签名 URL。
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
@@ -10,6 +11,7 @@
 #include "logging.h"
 #include "media_dao.h"
 #include "media_id.h"
+#include "media_read.h"
 #include "s3_client.h"
 
 namespace sparkpush {
@@ -19,6 +21,34 @@ using HttpResponse = ::sparkpush::net::HttpResponse;
 using namespace detail;
 
 namespace {
+
+constexpr int64_t kMinMultipartPartSize = 5LL * 1024 * 1024;
+constexpr int kMaxMultipartParts = 10000;
+
+int64_t NowSeconds() {
+    return std::chrono::duration_cast<std::chrono::seconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+// 计算 S3 multipart 的 part_size / part_count。
+bool ComputeMultipartPlan(int64_t size_bytes, int64_t configured_part_size,
+                          int64_t* part_size, int* part_count) {
+    if (!part_size || !part_count || size_bytes <= 0) return false;
+    int64_t size = configured_part_size > 0 ? configured_part_size
+                                            : 8LL * 1024 * 1024;
+    if (size < kMinMultipartPartSize) size = kMinMultipartPartSize;
+    int64_t count = (size_bytes + size - 1) / size;
+    if (count > kMaxMultipartParts) {
+        size = (size_bytes + kMaxMultipartParts - 1) / kMaxMultipartParts;
+        if (size < kMinMultipartPartSize) size = kMinMultipartPartSize;
+        count = (size_bytes + size - 1) / size;
+    }
+    if (count <= 0 || count > kMaxMultipartParts) return false;
+    *part_size = size;
+    *part_count = static_cast<int>(count);
+    return true;
+}
 
 bool IsHexSha256(const std::string& value) {
     if (value.size() != 64) return false;
@@ -94,6 +124,7 @@ void HttpApiServer::handleMediaUploadInit(const HttpRequest& req,
     std::string filename;
     int64_t size_bytes = 0;
     std::string sha256;
+    bool request_multipart = false;
     try {
         if (j.contains("kind")) {
             if (!j["kind"].is_string()) {
@@ -114,6 +145,13 @@ void HttpApiServer::handleMediaUploadInit(const HttpRequest& req,
         }
         if (j.contains("sha256") && j["sha256"].is_string()) {
             sha256 = j["sha256"].get<std::string>();
+        }
+        if (j.contains("multipart")) {
+            if (!j["multipart"].is_boolean()) {
+                WriteError(resp, 400, "multipart must be a boolean");
+                return;
+            }
+            request_multipart = j["multipart"].get<bool>();
         }
     } catch (const nlohmann::json::exception&) {
         WriteError(resp, 400, "invalid json fields in media upload init");
@@ -198,6 +236,62 @@ void HttpApiServer::handleMediaUploadInit(const HttpRequest& req,
     if (!media_dao_->Create(media, &err)) {
         LogError("create media_object failed: " + err);
         WriteError(resp, 500, "create media metadata failed");
+        return;
+    }
+
+    // 视频可以选择 S3 multipart 上传；图片/文件和旧客户端仍走单次 PUT。
+    if (is_video && request_multipart) {
+        int64_t part_size = 0;
+        int part_count = 0;
+        if (!ComputeMultipartPlan(size_bytes,
+                                  media_multipart_part_size_bytes_,
+                                  &part_size, &part_count)) {
+            media_dao_->MarkDeleted(media.media_id, &err);
+            WriteError(resp, 400, "invalid multipart part size");
+            return;
+        }
+
+        std::string upload_id;
+        if (!s3_client_->CreateMultipartUpload(media.object_key, media.mime_type,
+                                               &upload_id, &err)) {
+            LogError("CreateMultipartUpload failed for " + media.media_id +
+                     ": " + err);
+            media_dao_->MarkDeleted(media.media_id, &err);
+            WriteError(resp, 503, "create multipart upload failed");
+            return;
+        }
+
+        MultipartUploadSession session;
+        session.media_id = media.media_id;
+        session.upload_id = upload_id;
+        session.part_size = static_cast<int>(part_size);
+        session.parts_total = part_count;
+        const int session_ttl =
+            media_multipart_upload_ttl_seconds_ > 0
+                ? media_multipart_upload_ttl_seconds_
+                : 86400;
+        session.expires_at = NowSeconds() + session_ttl;
+        if (!media_dao_->CreateMultipartSession(session, &err)) {
+            LogError("CreateMultipartSession failed for " + media.media_id +
+                     ": " + err);
+            std::string abort_err;
+            s3_client_->AbortMultipartUpload(media.object_key, upload_id,
+                                             &abort_err);
+            media_dao_->MarkDeleted(media.media_id, &err);
+            WriteError(resp, 500, "create multipart upload session failed");
+            return;
+        }
+
+        nlohmann::json data;
+        data["media_id"] = media.media_id;
+        data["object_key"] = media.object_key;
+        data["status"] = media.status;
+        data["upload_method"] = "multipart";
+        data["part_size"] = part_size;
+        data["part_count"] = part_count;
+        data["expires_at"] = session.expires_at;
+        data["max_bytes"] = max_bytes;
+        WriteJson(resp, 0, "ok", data.dump());
         return;
     }
 
@@ -297,8 +391,93 @@ void HttpApiServer::handleMediaUploadComplete(const HttpRequest& req,
         max_bytes = media_max_video_bytes_;
     }
 
+    MultipartUploadSession upload;
+    bool has_multipart = false;
+    if (!media_dao_->GetMultipartSession(media_id, &upload, &has_multipart,
+                                         &err)) {
+        LogError("GetMultipartSession failed for " + media_id + ": " + err);
+        WriteError(resp, 500, "load multipart upload failed");
+        return;
+    }
+
     S3HeadResult head;
-    if (!s3_client_->HeadObject(media.object_key, &head, &err)) {
+    if (has_multipart) {
+        if (media.kind != "video") {
+            WriteError(resp, 409, "multipart upload is only for video");
+            return;
+        }
+        if (upload.expires_at > 0 && upload.expires_at < NowSeconds()) {
+            WriteError(resp, 409, "multipart upload expired; init again");
+            return;
+        }
+
+        std::vector<S3MultipartPart> parts;
+        bool no_such_upload = false;
+        if (!s3_client_->ListParts(media.object_key, upload.upload_id, &parts,
+                                   &no_such_upload, &err)) {
+            if (!no_such_upload) {
+                LogError("ListParts failed for " + media_id + ": " + err);
+                WriteError(resp, 503, "list multipart parts failed");
+                return;
+            }
+            // S3 已完成但 DB 未更新：用 HEAD 恢复，保证 complete 幂等。
+            if (!s3_client_->HeadObject(media.object_key, &head, &err)) {
+                WriteError(resp, 409,
+                           "multipart upload not found; upload again");
+                return;
+            }
+        } else {
+            if (static_cast<int>(parts.size()) != upload.parts_total) {
+                WriteError(resp, 409,
+                           "multipart upload incomplete: uploaded " +
+                               std::to_string(parts.size()) + "/" +
+                               std::to_string(upload.parts_total));
+                return;
+            }
+            int64_t total = 0;
+            const int64_t expected_last =
+                media.size_bytes -
+                static_cast<int64_t>(upload.part_size) *
+                    (upload.parts_total - 1);
+            for (size_t i = 0; i < parts.size(); ++i) {
+                if (parts[i].part_number != static_cast<int>(i) + 1) {
+                    WriteError(resp, 400, "multipart parts are not contiguous");
+                    return;
+                }
+                const int64_t expected =
+                    (static_cast<int>(i) == upload.parts_total - 1)
+                        ? expected_last
+                        : upload.part_size;
+                if (expected <= 0 || parts[i].size_bytes != expected) {
+                    WriteError(resp, 400,
+                               "multipart part size mismatch at part " +
+                                   std::to_string(parts[i].part_number));
+                    return;
+                }
+                total += parts[i].size_bytes;
+            }
+            if (total != media.size_bytes) {
+                WriteError(resp, 400, "multipart total size mismatch");
+                return;
+            }
+
+            S3PutResult complete_result;
+            if (!s3_client_->CompleteMultipartUpload(
+                    media.object_key, upload.upload_id, parts,
+                    &complete_result, &err)) {
+                LogError("CompleteMultipartUpload failed for " + media_id +
+                         ": " + err);
+                WriteError(resp, 503, "complete multipart upload failed");
+                return;
+            }
+            if (!s3_client_->HeadObject(media.object_key, &head, &err)) {
+                LogError("HEAD after multipart complete failed for " +
+                         media_id + ": " + err);
+                WriteError(resp, 503, "verify uploaded object failed");
+                return;
+            }
+        }
+    } else if (!s3_client_->HeadObject(media.object_key, &head, &err)) {
         LogWarn("HEAD media object failed for " + media.media_id + ": " + err);
         WriteError(resp, 400, "uploaded object not found; PUT the file first");
         return;
@@ -323,6 +502,13 @@ void HttpApiServer::handleMediaUploadComplete(const HttpRequest& req,
         LogError("MarkUploaded failed for " + media.media_id + ": " + err);
         WriteError(resp, 500, "update media status failed");
         return;
+    }
+    if (has_multipart) {
+        std::string session_err;
+        if (!media_dao_->DeleteMultipartSession(media.media_id, &session_err)) {
+            LogWarn("DeleteMultipartSession failed for " + media.media_id +
+                    ": " + session_err);
+        }
     }
 
     // 文件不需要转码/缩略图，HEAD 校验通过即可直接标记 ready；
@@ -349,6 +535,334 @@ void HttpApiServer::handleMediaUploadComplete(const HttpRequest& req,
     nlohmann::json data{{"media_id", media.media_id},
                         {"status", final_status},
                         {"size_bytes", head.size_bytes}};
+    WriteJson(resp, 0, "ok", data.dump());
+}
+
+// POST /api/media/upload/multipart/part_urls
+// 只给 owner 返回指定 part 的短期预签名 UploadPart URL。
+void HttpApiServer::handleMediaMultipartPartUrls(const HttpRequest& req,
+                                                 HttpResponse* resp) {
+    if (!RequirePost(req, resp)) return;
+    const int64_t user_id = AuthenticateRequest(req, resp);
+    if (user_id <= 0) return;
+    if (!media_dao_ || !s3_client_ || !s3_client_->ready()) {
+        WriteError(resp, 503, "media storage is not initialized");
+        return;
+    }
+
+    nlohmann::json j;
+    if (!ParseJsonBody(req.body(), &j)) {
+        WriteError(resp, 400, "invalid json body");
+        return;
+    }
+    std::string media_id;
+    std::vector<int> part_numbers;
+    try {
+        if (!j.contains("media_id") || !j["media_id"].is_string() ||
+            !j.contains("part_numbers") || !j["part_numbers"].is_array()) {
+            WriteError(resp, 400, "media_id/part_numbers required");
+            return;
+        }
+        media_id = j["media_id"].get<std::string>();
+        if (j["part_numbers"].size() == 0 || j["part_numbers"].size() > 100) {
+            WriteError(resp, 400, "part_numbers must contain 1..100 items");
+            return;
+        }
+        for (const auto& item : j["part_numbers"]) {
+            if (!item.is_number_integer()) {
+                WriteError(resp, 400, "part_numbers must be integers");
+                return;
+            }
+            const int n = item.get<int>();
+            if (n <= 0) {
+                WriteError(resp, 400, "part_numbers must be positive");
+                return;
+            }
+            part_numbers.push_back(n);
+        }
+    } catch (const nlohmann::json::exception&) {
+        WriteError(resp, 400, "invalid json fields in part_urls");
+        return;
+    }
+    if (!IsValidMediaId(media_id)) {
+        WriteError(resp, 400, "invalid media_id");
+        return;
+    }
+
+    MediaObject media;
+    std::string err;
+    if (!media_dao_->GetById(media_id, &media, &err)) {
+        WriteError(resp, 404, "media not found");
+        return;
+    }
+    if (media.owner_id != user_id) {
+        WriteError(resp, 403, "forbidden: not media owner");
+        return;
+    }
+    if (media.status != "init" || media.kind != "video") {
+        WriteError(resp, 409, "media is not an active video upload");
+        return;
+    }
+
+    MultipartUploadSession upload;
+    bool found = false;
+    if (!media_dao_->GetMultipartSession(media_id, &upload, &found, &err)) {
+        LogError("GetMultipartSession failed for " + media_id + ": " + err);
+        WriteError(resp, 500, "load multipart upload failed");
+        return;
+    }
+    if (!found) {
+        WriteError(resp, 404, "multipart upload not found");
+        return;
+    }
+    if (upload.expires_at > 0 && upload.expires_at < NowSeconds()) {
+        WriteError(resp, 409, "multipart upload expired; init again");
+        return;
+    }
+
+    // 去重，避免同一批重复签名。
+    std::sort(part_numbers.begin(), part_numbers.end());
+    part_numbers.erase(std::unique(part_numbers.begin(), part_numbers.end()),
+                       part_numbers.end());
+    for (int n : part_numbers) {
+        if (n > upload.parts_total) {
+            WriteError(resp, 400, "part_number out of range");
+            return;
+        }
+    }
+
+    const int ttl = media_upload_url_ttl_seconds_ > 0
+                        ? media_upload_url_ttl_seconds_
+                        : s3_client_->config().presign_ttl_seconds;
+    nlohmann::json parts = nlohmann::json::array();
+    for (int n : part_numbers) {
+        int64_t expires_at = 0;
+        const std::string url = s3_client_->PresignUploadPart(
+            media.object_key, upload.upload_id, n, ttl, &expires_at);
+        if (url.empty()) {
+            LogError("PresignUploadPart failed for " + media_id + " part " +
+                     std::to_string(n));
+            WriteError(resp, 503, "create part upload url failed");
+            return;
+        }
+        parts.push_back({{"part_number", n},
+                         {"url", url},
+                         {"expires_at", expires_at}});
+    }
+
+    nlohmann::json data;
+    data["media_id"] = media_id;
+    data["parts"] = std::move(parts);
+    WriteJson(resp, 0, "ok", data.dump());
+}
+
+// POST /api/media/upload/multipart/status
+// 返回已上传 part，支持浏览器中断后跳过已完成分片。
+void HttpApiServer::handleMediaMultipartStatus(const HttpRequest& req,
+                                               HttpResponse* resp) {
+    if (!RequirePost(req, resp)) return;
+    const int64_t user_id = AuthenticateRequest(req, resp);
+    if (user_id <= 0) return;
+    if (!media_dao_ || !s3_client_ || !s3_client_->ready()) {
+        WriteError(resp, 503, "media storage is not initialized");
+        return;
+    }
+
+    nlohmann::json j;
+    if (!ParseJsonBody(req.body(), &j)) {
+        WriteError(resp, 400, "invalid json body");
+        return;
+    }
+    std::string media_id;
+    try {
+        if (!j.contains("media_id") || !j["media_id"].is_string()) {
+            WriteError(resp, 400, "media_id required");
+            return;
+        }
+        media_id = j["media_id"].get<std::string>();
+    } catch (const nlohmann::json::exception&) {
+        WriteError(resp, 400, "invalid media_id");
+        return;
+    }
+    if (!IsValidMediaId(media_id)) {
+        WriteError(resp, 400, "invalid media_id");
+        return;
+    }
+
+    MediaObject media;
+    std::string err;
+    if (!media_dao_->GetById(media_id, &media, &err)) {
+        WriteError(resp, 404, "media not found");
+        return;
+    }
+    if (media.owner_id != user_id) {
+        WriteError(resp, 403, "forbidden: not media owner");
+        return;
+    }
+    if (media.status == "ready" || media.status == "processing" ||
+        media.status == "uploaded") {
+        nlohmann::json data{{"media_id", media_id},
+                            {"status", media.status},
+                            {"uploaded_parts", nlohmann::json::array()}};
+        WriteJson(resp, 0, "ok", data.dump());
+        return;
+    }
+    if (media.status != "init" || media.kind != "video") {
+        WriteError(resp, 409, "media is not an active video upload");
+        return;
+    }
+
+    MultipartUploadSession upload;
+    bool found = false;
+    if (!media_dao_->GetMultipartSession(media_id, &upload, &found, &err)) {
+        LogError("GetMultipartSession failed for " + media_id + ": " + err);
+        WriteError(resp, 500, "load multipart upload failed");
+        return;
+    }
+    if (found && upload.expires_at > 0 &&
+        upload.expires_at < NowSeconds()) {
+        WriteError(resp, 409, "multipart upload expired; init again");
+        return;
+    }
+
+    if (found) {
+        std::vector<S3MultipartPart> parts;
+        bool no_such_upload = false;
+        if (!s3_client_->ListParts(media.object_key, upload.upload_id, &parts,
+                                   &no_such_upload, &err)) {
+            if (!no_such_upload) {
+                LogError("ListParts failed for " + media_id + ": " + err);
+                WriteError(resp, 503, "list multipart parts failed");
+                return;
+            }
+            // upload 已被 S3 合并但 DB 尚未更新：让客户端直接 complete。
+            S3HeadResult head;
+            if (s3_client_->HeadObject(media.object_key, &head, &err) &&
+                head.size_bytes == media.size_bytes) {
+                nlohmann::json data{
+                    {"media_id", media_id},
+                    {"status", "uploaded"},
+                    {"uploaded_parts", nlohmann::json::array()}};
+                WriteJson(resp, 0, "ok", data.dump());
+                return;
+            }
+            WriteError(resp, 404, "multipart upload not found");
+            return;
+        }
+
+        nlohmann::json uploaded = nlohmann::json::array();
+        for (const auto& part : parts) {
+            uploaded.push_back({{"part_number", part.part_number},
+                                {"size_bytes", part.size_bytes}});
+        }
+        nlohmann::json data;
+        data["media_id"] = media_id;
+        data["status"] = "init";
+        data["part_size"] = upload.part_size;
+        data["part_count"] = upload.parts_total;
+        data["uploaded_parts"] = std::move(uploaded);
+        data["expires_at"] = upload.expires_at;
+        WriteJson(resp, 0, "ok", data.dump());
+        return;
+    }
+
+    // 没有会话：兼容 S3 已完成但 DB 没更新的情况。
+    S3HeadResult head;
+    if (s3_client_->HeadObject(media.object_key, &head, &err) &&
+        head.size_bytes == media.size_bytes) {
+        nlohmann::json data{{"media_id", media_id},
+                            {"status", "uploaded"},
+                            {"uploaded_parts", nlohmann::json::array()}};
+        WriteJson(resp, 0, "ok", data.dump());
+        return;
+    }
+    WriteError(resp, 404, "multipart upload not found");
+}
+
+// POST /api/media/upload/abort
+// 取消未完成的上传：abort S3 multipart，标记 media deleted。
+void HttpApiServer::handleMediaUploadAbort(const HttpRequest& req,
+                                           HttpResponse* resp) {
+    if (!RequirePost(req, resp)) return;
+    const int64_t user_id = AuthenticateRequest(req, resp);
+    if (user_id <= 0) return;
+    if (!media_dao_ || !s3_client_ || !s3_client_->ready()) {
+        WriteError(resp, 503, "media storage is not initialized");
+        return;
+    }
+
+    nlohmann::json j;
+    if (!ParseJsonBody(req.body(), &j)) {
+        WriteError(resp, 400, "invalid json body");
+        return;
+    }
+    std::string media_id;
+    try {
+        if (!j.contains("media_id") || !j["media_id"].is_string()) {
+            WriteError(resp, 400, "media_id required");
+            return;
+        }
+        media_id = j["media_id"].get<std::string>();
+    } catch (const nlohmann::json::exception&) {
+        WriteError(resp, 400, "invalid media_id");
+        return;
+    }
+    if (!IsValidMediaId(media_id)) {
+        WriteError(resp, 400, "invalid media_id");
+        return;
+    }
+
+    MediaObject media;
+    std::string err;
+    if (!media_dao_->GetById(media_id, &media, &err)) {
+        WriteError(resp, 404, "media not found");
+        return;
+    }
+    if (media.owner_id != user_id) {
+        WriteError(resp, 403, "forbidden: not media owner");
+        return;
+    }
+    if (media.status == "deleted") {
+        nlohmann::json data{{"media_id", media_id}, {"status", "deleted"}};
+        WriteJson(resp, 0, "ok", data.dump());
+        return;
+    }
+    if (media.status != "init") {
+        WriteError(resp, 409, "only init upload can be aborted");
+        return;
+    }
+
+    MultipartUploadSession upload;
+    bool found = false;
+    if (!media_dao_->GetMultipartSession(media_id, &upload, &found, &err)) {
+        LogError("GetMultipartSession failed for " + media_id + ": " + err);
+        WriteError(resp, 500, "load multipart upload failed");
+        return;
+    }
+    if (found) {
+        if (!s3_client_->AbortMultipartUpload(media.object_key,
+                                              upload.upload_id, &err)) {
+            LogError("AbortMultipartUpload failed for " + media_id + ": " +
+                     err);
+            WriteError(resp, 503, "abort multipart upload failed");
+            return;
+        }
+        std::string delete_err;
+        if (!media_dao_->DeleteMultipartSession(media_id, &delete_err)) {
+            LogWarn("DeleteMultipartSession failed for " + media_id + ": " +
+                    delete_err);
+        }
+    } else {
+        // 单次 PUT 的 init 孤儿：对象存在就删掉，不存在也继续。
+        std::string delete_err;
+        s3_client_->DeleteObject(media.object_key, &delete_err);
+    }
+    if (!media_dao_->MarkDeleted(media_id, &err)) {
+        LogError("MarkDeleted failed for " + media_id + ": " + err);
+        WriteError(resp, 500, "mark media deleted failed");
+        return;
+    }
+    nlohmann::json data{{"media_id", media_id}, {"status", "deleted"}};
     WriteJson(resp, 0, "ok", data.dump());
 }
 
@@ -381,11 +895,27 @@ void HttpApiServer::handleMediaGet(const HttpRequest& req, HttpResponse* resp) {
         return;
     }
 
-    MediaObject media;
+    CachedMedia cached;
     std::string err;
-    if (!media_dao_->GetById(media_id, &media, &err)) {
+    if (!LoadMediaWithVariants(media_dao_, media_cache_, media_id, &cached,
+                               &err)) {
         WriteError(resp, 404, "media not found");
         return;
+    }
+    MediaObject& media = cached.object;
+
+    // 竞态兜底：缓存里 session_id 为空、请求者不是 owner 时，
+    // 可能是“读者在绑定前回源、绑定后写回旧值”。强制回源一次。
+    if (media.session_id.empty() && media.owner_id != user_id) {
+        CachedMedia fresh;
+        std::string refresh_err;
+        if (LoadMediaWithVariants(media_dao_, media_cache_, media_id, &fresh,
+                                  &refresh_err, true)) {
+            cached = std::move(fresh);
+        } else {
+            LogWarn("refresh media cache before access check failed: " +
+                    media_id + " " + refresh_err);
+        }
     }
 
     // owner 永远可读；已绑定消息的媒体允许会话成员读取。
@@ -423,33 +953,21 @@ void HttpApiServer::handleMediaGet(const HttpRequest& req, HttpResponse* resp) {
         return;
     }
 
-    std::vector<MediaVariant> variants;
-    if (!media_dao_->ListVariants(media.media_id, &variants, &err)) {
-        LogError("ListVariants failed for " + media.media_id + ": " + err);
-        WriteError(resp, 500, "list media variants failed");
-        return;
-    }
-
     const int ttl = media_download_url_ttl_seconds_ > 0
                         ? media_download_url_ttl_seconds_
                         : 900;
     nlohmann::json variant_json = nlohmann::json::object();
-    for (const auto& variant : variants) {
-        int64_t expires_at = 0;
-        const std::string url =
-            s3_client_->PresignGet(variant.object_key, ttl, &expires_at);
-        if (url.empty()) {
+    for (const auto& variant : cached.variants) {
+        nlohmann::json entry;
+        std::string variant_err;
+        if (!BuildVariantJson(variant, media_variant_cdn_base_url_, s3_client_,
+                              ttl, &entry, &variant_err)) {
+            LogError("build variant url failed for " + media.media_id + "/" +
+                     variant.variant + ": " + variant_err);
             WriteError(resp, 503, "create media download url failed");
             return;
         }
-        variant_json[variant.variant] = {
-            {"url", url},
-            {"width", variant.width},
-            {"height", variant.height},
-            {"size_bytes", variant.size_bytes},
-            {"format", variant.format},
-            {"expires_at", expires_at},
-        };
+        variant_json[variant.variant] = std::move(entry);
     }
     // 图片必须有至少一档缩略图；普通文件没有变体，原文件即是最终产物。
     if (variant_json.empty() && media.kind != "file") {

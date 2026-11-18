@@ -15,6 +15,7 @@
 
 namespace sparkpush {
 
+class MediaCache;
 class MediaDao;
 class S3Client;
 struct User;
@@ -36,7 +37,8 @@ struct UserBrief {
 
 // 头像优先使用 thumb 变体，缺失时回退原图；S3 未就绪或媒体不可用时
 // 保留 avatar_media_id，avatar_url 为空。
-bool BuildUserBrief(MediaDao* media_dao, S3Client* s3, int ttl_seconds,
+bool BuildUserBrief(MediaDao* media_dao, MediaCache* media_cache, S3Client* s3,
+                    const std::string& cdn_base_url, int ttl_seconds,
                     const User& user, UserBrief* out);
 
 nlohmann::json UserBriefToJson(const UserBrief& user, bool include_account);

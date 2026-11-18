@@ -16,6 +16,8 @@ add_executable(logic_server
   friend_dao.cpp
   friend_service.cpp
   redis_store.cpp
+  media_cache.cpp
+  media_read.cpp
   danmaku_dao.cpp
   group_dao.cpp
   session_dao.cpp

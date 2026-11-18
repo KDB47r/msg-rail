@@ -8,8 +8,10 @@
 #include "http_server.h"
 #include "http_server_internal.h"
 #include "logging.h"
+#include "media_cache.h"
 #include "media_dao.h"
 #include "media_id.h"
+#include "media_read.h"
 #include "model.h"
 #include "s3_client.h"
 
@@ -72,7 +74,8 @@ nlohmann::json BuildProfileJson(const UserBrief& brief, bool is_self,
 
 namespace detail {
 
-bool BuildUserBrief(MediaDao* media_dao, S3Client* s3, int ttl_seconds,
+bool BuildUserBrief(MediaDao* media_dao, MediaCache* media_cache, S3Client* s3,
+                    const std::string& cdn_base_url, int ttl_seconds,
                     const User& user, UserBrief* out) {
     if (!out) return false;
     out->user_id = user.id;
@@ -86,31 +89,42 @@ bool BuildUserBrief(MediaDao* media_dao, S3Client* s3, int ttl_seconds,
         return true;
     }
 
-    MediaObject media;
+    CachedMedia cached;
     std::string err;
-    if (!media_dao->GetById(user.avatar_media_id, &media, &err)) {
+    if (!LoadMediaWithVariants(media_dao, media_cache, user.avatar_media_id,
+                               &cached, &err)) {
         LogWarn("avatar media not found: " + user.avatar_media_id + " " + err);
         return true;
     }
+    const MediaObject& media = cached.object;
     if (media.owner_id != user.id || media.kind != "image" ||
         media.status != "ready") {
         return true;
     }
 
-    std::string object_key = media.object_key;
-    std::vector<MediaVariant> variants;
-    if (media_dao->ListVariants(media.media_id, &variants, &err)) {
-        for (const auto& variant : variants) {
-            if (variant.variant == "thumb" && !variant.object_key.empty()) {
-                object_key = variant.object_key;
-                break;
-            }
+    const MediaVariant* thumb = nullptr;
+    for (const auto& variant : cached.variants) {
+        if (variant.variant == "thumb" && !variant.object_key.empty()) {
+            thumb = &variant;
+            break;
         }
     }
-    if (object_key.empty()) return true;
 
+    if (thumb) {
+        std::string url;
+        int64_t expires_at = 0;
+        if (BuildVariantUrl(*thumb, cdn_base_url, s3, ttl_seconds, &url,
+                            &expires_at) &&
+            !url.empty()) {
+            out->avatar_url = std::move(url);
+            out->avatar_expires_at = expires_at;
+        }
+        return true;
+    }
+
+    if (media.object_key.empty()) return true;
     out->avatar_url =
-        s3->PresignGet(object_key, ttl_seconds, &out->avatar_expires_at);
+        s3->PresignGet(media.object_key, ttl_seconds, &out->avatar_expires_at);
     return true;
 }
 
@@ -183,7 +197,9 @@ void HttpApiServer::handleUserProfileGet(const HttpRequest& req,
     }
 
     UserBrief brief;
-    BuildUserBrief(media_dao_, s3_client_, media_download_url_ttl_seconds_,
+    BuildUserBrief(media_dao_, media_cache_, s3_client_,
+                       media_variant_cdn_base_url_,
+                       media_download_url_ttl_seconds_,
                    user, &brief);
     WriteJson(resp, 0, "ok",
               BuildProfileJson(brief, is_self, relationship).dump());
@@ -298,7 +314,9 @@ void HttpApiServer::handleUserProfileUpdate(const HttpRequest& req,
     user.avatar_media_id = new_avatar;
 
     UserBrief brief;
-    BuildUserBrief(media_dao_, s3_client_, media_download_url_ttl_seconds_,
+    BuildUserBrief(media_dao_, media_cache_, s3_client_,
+                       media_variant_cdn_base_url_,
+                       media_download_url_ttl_seconds_,
                    user, &brief);
     WriteJson(resp, 0, "ok", BuildProfileJson(brief, true, "self").dump());
 }
@@ -399,7 +417,9 @@ void HttpApiServer::handleUserSearch(const HttpRequest& req,
             return;
         }
         UserBrief brief;
-        BuildUserBrief(media_dao_, s3_client_, media_download_url_ttl_seconds_,
+        BuildUserBrief(media_dao_, media_cache_, s3_client_,
+                       media_variant_cdn_base_url_,
+                       media_download_url_ttl_seconds_,
                        user, &brief);
         nlohmann::json entry = UserBriefToJson(brief, false);
         entry["relationship"] = relationship;

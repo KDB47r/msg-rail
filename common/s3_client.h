@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace sparkpush {
 
@@ -52,6 +53,12 @@ struct S3GetFileResult {
 
 struct S3PutResult {
     std::string etag;
+};
+
+struct S3MultipartPart {
+    int part_number{0};
+    std::string etag;
+    int64_t size_bytes{0};
 };
 
 class S3Client {
@@ -99,7 +106,8 @@ class S3Client {
 
     bool PutObject(const std::string& object_key, const std::string& body,
                    const std::string& content_type, S3PutResult* out,
-                   std::string* err) const;
+                   std::string* err,
+                   const std::string& cache_control = "") const;
 
     // 流式上传本地文件，避免大视频转码结果整体读进内存。
     // 使用内部 endpoint 的预签名 PUT URL；文件必须非空且不超过 max_bytes。
@@ -110,6 +118,30 @@ class S3Client {
                            std::string* err) const;
 
     bool DeleteObject(const std::string& object_key, std::string* err) const;
+
+    // ---- S3 multipart 上传 ----
+    bool CreateMultipartUpload(const std::string& object_key,
+                               const std::string& content_type,
+                               std::string* upload_id, std::string* err) const;
+    std::string PresignUploadPart(const std::string& object_key,
+                                  const std::string& upload_id,
+                                  int part_number, int ttl_seconds,
+                                  int64_t* expires_at = nullptr) const;
+    // 供单元测试注入固定时间。
+    std::string PresignUploadPartWithTime(
+        const std::string& object_key, const std::string& upload_id,
+        int part_number, int ttl_seconds, int64_t now_seconds,
+        int64_t* expires_at = nullptr, std::string* err = nullptr) const;
+    bool ListParts(const std::string& object_key, const std::string& upload_id,
+                   std::vector<S3MultipartPart>* parts, bool* no_such_upload,
+                   std::string* err) const;
+    bool CompleteMultipartUpload(
+        const std::string& object_key, const std::string& upload_id,
+        const std::vector<S3MultipartPart>& parts, S3PutResult* out,
+        std::string* err) const;
+    bool AbortMultipartUpload(const std::string& object_key,
+                              const std::string& upload_id,
+                              std::string* err) const;
 
     const S3Config& config() const { return cfg_; }
     std::string ObjectUrlPath(const std::string& object_key) const;
@@ -143,7 +175,9 @@ class S3Client {
                        std::string* response_etag,
                        std::string* response_content_type,
                        std::string* response_content_length,
-                       std::string* err) const;
+                       std::string* err,
+                       const std::string& cache_control = "",
+                       const std::string& query = "") const;
 
     S3Config cfg_;
     Endpoint internal_;

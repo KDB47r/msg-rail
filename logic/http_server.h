@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+
 #include "config.h"
 #include "conversation_store.h"
 #include "danmaku_dao.h"
@@ -8,11 +10,13 @@
 #include "kafka_producer.h"
 #include "net/http_server_lite.h"
 #include "redis_store.h"
+#include "thread_pool.h"
 #include "user_dao.h"
 
 namespace sparkpush {
 
 class MediaDao;
+class MediaCache;
 class S3Client;
 
 class HttpApiServer {
@@ -26,7 +30,8 @@ class HttpApiServer {
                   KafkaProducer* kafka_producer,
                   KafkaProducer* broadcast_producer, DanmakuDao* danmaku_dao,
                   MediaDao* media_dao, S3Client* s3_client,
-                  const Config& config);
+                  MediaCache* media_cache, const Config& config);
+    ~HttpApiServer();
 
     void setThreadNum(int numThreads) { server_.setThreadNum(numThreads); }
     void run() { server_.run(); }
@@ -34,6 +39,9 @@ class HttpApiServer {
 
    private:
     void onRequest(const HttpRequest& req, HttpResponse* resp);
+    // 异步入口：IO 线程只复制请求并投递，真正的 handler 在业务线程池执行。
+    void onRequestAsync(const HttpRequest& req, HttpResponse* resp,
+                        std::function<void()> done);
 
     // 账号体系：登录 / 注册
     void handleLogin(const HttpRequest& req, HttpResponse* resp);
@@ -67,6 +75,11 @@ class HttpApiServer {
     // 媒体：初始化直传 / 确认上传 / 查询元数据与签名 URL
     void handleMediaUploadInit(const HttpRequest& req, HttpResponse* resp);
     void handleMediaUploadComplete(const HttpRequest& req, HttpResponse* resp);
+    void handleMediaMultipartPartUrls(const HttpRequest& req,
+                                      HttpResponse* resp);
+    void handleMediaMultipartStatus(const HttpRequest& req,
+                                    HttpResponse* resp);
+    void handleMediaUploadAbort(const HttpRequest& req, HttpResponse* resp);
     void handleMediaGet(const HttpRequest& req, HttpResponse* resp);
 
     // 弹幕
@@ -103,6 +116,7 @@ class HttpApiServer {
     DanmakuDao* danmaku_dao_;
     MediaDao* media_dao_;
     S3Client* s3_client_;
+    MediaCache* media_cache_;
 
     std::string admin_account_;
     std::string admin_password_hash_;
@@ -112,7 +126,12 @@ class HttpApiServer {
     int64_t media_max_file_bytes_;
     int media_download_url_ttl_seconds_;
     int media_task_max_attempts_;
+    std::string media_variant_cdn_base_url_;
+    int64_t media_multipart_part_size_bytes_;
+    int media_multipart_upload_ttl_seconds_;
+    int media_upload_url_ttl_seconds_;
 
+    std::unique_ptr<ThreadPool> worker_pool_;
     ::sparkpush::net::HttpServerLite server_;
 };
 

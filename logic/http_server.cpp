@@ -204,7 +204,8 @@ HttpApiServer::HttpApiServer(uint16_t port, ConversationStore* store,
                              KafkaProducer* kafka_producer,
                              KafkaProducer* broadcast_producer,
                              DanmakuDao* danmaku_dao, MediaDao* media_dao,
-                             S3Client* s3_client, const Config& config)
+                             S3Client* s3_client, MediaCache* media_cache,
+                             const Config& config)
     : store_(store),
       user_dao_(user_dao),
       friend_service_(friend_service),
@@ -216,6 +217,7 @@ HttpApiServer::HttpApiServer(uint16_t port, ConversationStore* store,
       danmaku_dao_(danmaku_dao),
       media_dao_(media_dao),
       s3_client_(s3_client),
+      media_cache_(media_cache),
       admin_account_(config.admin_account),
       admin_password_hash_(config.admin_password_hash),
       admin_user_id_(config.admin_user_id),
@@ -225,11 +227,54 @@ HttpApiServer::HttpApiServer(uint16_t port, ConversationStore* store,
       media_download_url_ttl_seconds_(
           config.media_download_url_ttl_seconds),
       media_task_max_attempts_(config.media_task_max_attempts),
+      media_variant_cdn_base_url_(config.media_variant_cdn_base_url),
+      media_multipart_part_size_bytes_(
+          config.media_multipart_part_size_bytes),
+      media_multipart_upload_ttl_seconds_(
+          config.media_multipart_upload_ttl_seconds),
+      media_upload_url_ttl_seconds_(config.media_upload_url_ttl_seconds),
       server_(port, "logic_http_server") {
+    const int worker_threads =
+        config.http_worker_threads > 0 ? config.http_worker_threads : 8;
+    worker_pool_ = std::make_unique<ThreadPool>(
+        static_cast<size_t>(worker_threads), "logic_http_worker");
+    worker_pool_->Start();
+
     detail::g_cors_allow_origin = config.cors_allow_origin;
-    server_.setHttpCallback([this](const HttpRequest& req, HttpResponse* resp) {
-        this->onRequest(req, resp);
-    });
+    server_.setAsyncHttpCallback(
+        [this](const HttpRequest& req, HttpResponse* resp,
+               std::function<void()> done) {
+            this->onRequestAsync(req, resp, std::move(done));
+        });
+}
+
+HttpApiServer::~HttpApiServer() {
+    // 先停业务线程池，避免 handler 继续访问已经析构的依赖。
+    if (worker_pool_) worker_pool_->Stop();
+    server_.stop();
+}
+
+void HttpApiServer::onRequestAsync(const HttpRequest& req, HttpResponse* resp,
+                                   std::function<void()> done) {
+    if (!worker_pool_) {
+        WriteError(resp, 500, "http worker pool is not initialized");
+        done();
+        return;
+    }
+    HttpRequest request = req;
+    worker_pool_->Submit(
+        [this, request = std::move(request), resp,
+         done = std::move(done)]() mutable {
+            try {
+                this->onRequest(request, resp);
+            } catch (const std::exception& ex) {
+                WriteError(resp, 500,
+                           std::string("internal error: ") + ex.what());
+            } catch (...) {
+                WriteError(resp, 500, "internal error");
+            }
+            done();
+        });
 }
 
 // HTTP 路由入口：按路径分发到具体处理器。
@@ -272,6 +317,11 @@ void HttpApiServer::onRequest(const HttpRequest& req, HttpResponse* resp) {
         {"/api/danmaku/list", &HttpApiServer::handleDanmakuList},
         {"/api/media/upload/init", &HttpApiServer::handleMediaUploadInit},
         {"/api/media/upload/complete", &HttpApiServer::handleMediaUploadComplete},
+        {"/api/media/upload/multipart/part_urls",
+         &HttpApiServer::handleMediaMultipartPartUrls},
+        {"/api/media/upload/multipart/status",
+         &HttpApiServer::handleMediaMultipartStatus},
+        {"/api/media/upload/abort", &HttpApiServer::handleMediaUploadAbort},
         {"/api/chatroom/list", &HttpApiServer::handleChatroomList},
         {"/api/admin/chatroom/create",&HttpApiServer::handleAdminCreateChatroom},
         {"/api/admin/chatroom/list", &HttpApiServer::handleAdminListChatroom},

@@ -446,7 +446,13 @@
       const tries = attempt || 0;
       if (!img.isConnected) return;
       try {
-        const meta = await loadMediaMetadata(content.media_id);
+        // history 已内嵌 ready/failed 的 media 时直接使用；
+        // processing 或缺失时再走单张接口轮询最新状态。
+        const embedded = content.media;
+        const meta = (embedded &&
+          (embedded.status === 'ready' || embedded.status === 'failed'))
+          ? embedded
+          : await loadMediaMetadata(content.media_id);
         if (meta.status === 'ready') {
           const display = pickVariant(meta, ['thumb', 'micro', 'preview']) ||
                           meta.original;
@@ -534,7 +540,11 @@
       const tries = attempt || 0;
       if (!img.isConnected) return;
       try {
-        const meta = await loadMediaMetadata(content.media_id);
+        const embedded = content.media;
+        const meta = (embedded &&
+          (embedded.status === 'ready' || embedded.status === 'failed'))
+          ? embedded
+          : await loadMediaMetadata(content.media_id);
         if (meta.status === 'ready') {
           const poster = pickVariant(meta, ['poster']);
           if (poster && poster.url) {
@@ -670,6 +680,305 @@
       });
     }
 
+    // ---- 视频 multipart 上传与断点续传 ----
+    const VIDEO_UPLOAD_STATE_PREFIX = 'sparkpush.upload.video.v1.';
+
+    function videoStateHash(text) {
+      let h = 0x811c9dc5;
+      for (let i = 0; i < text.length; ++i) {
+        h ^= text.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+      }
+      return h.toString(16);
+    }
+
+    function videoStateKey(file) {
+      return VIDEO_UPLOAD_STATE_PREFIX + videoStateHash(
+        [file.name || '', file.size, file.lastModified || 0].join('|'));
+    }
+
+    function loadVideoUploadState(file) {
+      try {
+        const raw = localStorage.getItem(videoStateKey(file));
+        if (!raw) return null;
+        const state = JSON.parse(raw);
+        if (String(state.file_name || '') !== String(file.name || '') ||
+            Number(state.file_size) !== Number(file.size) ||
+            Number(state.last_modified || 0) !== Number(file.lastModified || 0)) {
+          return null;
+        }
+        if (state.expires_at && Date.now() / 1000 > Number(state.expires_at)) {
+          localStorage.removeItem(videoStateKey(file));
+          return null;
+        }
+        return state;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function saveVideoUploadState(file, state) {
+      try {
+        localStorage.setItem(videoStateKey(file), JSON.stringify(state));
+      } catch (e) {
+        // localStorage 不可用不影响这次上传，只是不能跨刷新续传。
+      }
+    }
+
+    function clearVideoUploadState(file) {
+      try { localStorage.removeItem(videoStateKey(file)); } catch (e) {}
+    }
+
+    // UploadPart：每个分片独立进度，失败时把 HTTP status 带出来。
+    function uploadPartWithProgress(url, blob, onProgress, timeoutMs) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', url, true);
+        xhr.timeout = timeoutMs || 300000;
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable && onProgress) onProgress(e.loaded);
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
+          } else {
+            const err = new Error('分片上传失败 HTTP ' + xhr.status);
+            err.status = xhr.status;
+            reject(err);
+          }
+        };
+        xhr.onerror = () => reject(new Error('分片上传网络错误，请检查 MinIO 与 CORS'));
+        xhr.ontimeout = () => reject(new Error('分片上传超时'));
+        xhr.send(blob);
+      });
+    }
+
+    async function runUploadPool(items, limit, fn) {
+      let next = 0;
+      const runners = [];
+      for (let i = 0; i < Math.min(limit, items.length); ++i) {
+        runners.push((async () => {
+          while (true) {
+            const index = next++;
+            if (index >= items.length) return;
+            await fn(items[index]);
+          }
+        })());
+      }
+      await Promise.all(runners);
+    }
+
+    async function fetchMultipartStatus(mediaId) {
+      try {
+        return await apiPost('/api/media/upload/multipart/status',
+                             {media_id: mediaId});
+      } catch (e) {
+        if (e.status === 404 || e.status === 409) return null;
+        throw e;
+      }
+    }
+
+    function multipartPartSize(n, partSize, partCount, totalSize) {
+      if (n < partCount) return partSize;
+      return Math.max(0, totalSize - partSize * (partCount - 1));
+    }
+
+    async function uploadMissingParts(file, mediaId, partSize, partCount,
+                                       uploadedSet, opts) {
+      const missing = [];
+      for (let n = 1; n <= partCount; ++n) {
+        if (!uploadedSet.has(n)) missing.push(n);
+      }
+      if (!missing.length) return;
+
+      let completedBytes = 0;
+      uploadedSet.forEach(n => {
+        completedBytes += multipartPartSize(n, partSize, partCount, file.size);
+      });
+      const partProgress = new Map();
+      const updateProgress = () => {
+        let current = 0;
+        partProgress.forEach(v => { current += v; });
+        const pct = Math.min(99, Math.round(
+          (completedBytes + current) * 100 / Math.max(1, file.size)));
+        setUploadStatus('上传中 ' + pct + '%');
+      };
+
+      const batchSize = 20;
+      for (let start = 0; start < missing.length; start += batchSize) {
+        const batch = missing.slice(start, start + batchSize);
+        const partList = await apiPost(
+          '/api/media/upload/multipart/part_urls',
+          {media_id: mediaId, part_numbers: batch});
+        const urls = new Map();
+        (partList.parts || []).forEach(p => {
+          urls.set(Number(p.part_number), p.url);
+        });
+
+        await runUploadPool(batch, 3, async (n) => {
+          let url = urls.get(n);
+          if (!url) throw new Error('服务端没有返回分片 ' + n + ' 的上传地址');
+          const begin = (n - 1) * partSize;
+          const end = Math.min(file.size, begin + partSize);
+          if (end <= begin) throw new Error('分片 ' + n + ' 范围为空');
+          const blob = file.slice(begin, end);
+          let attempt = 0;
+          while (true) {
+            try {
+              await uploadPartWithProgress(
+                url, blob,
+                loaded => {
+                  partProgress.set(n, Math.min(loaded, blob.size));
+                  updateProgress();
+                },
+                opts.partTimeoutMs || 300000);
+              partProgress.set(n, blob.size);
+              completedBytes += blob.size;
+              uploadedSet.add(n);
+              updateProgress();
+              return;
+            } catch (e) {
+              attempt++;
+              if (attempt >= 3) {
+                throw new Error('分片 ' + n + ' 上传失败: ' + e.message);
+              }
+              partProgress.set(n, 0);
+              updateProgress();
+              if (e.status === 403) {
+                // 预签名 URL 过期，换新 URL 再试。
+                try {
+                  const refreshed = await apiPost(
+                    '/api/media/upload/multipart/part_urls',
+                    {media_id: mediaId, part_numbers: [n]});
+                  const item = (refreshed.parts || [])[0];
+                  if (item && item.url) url = item.url;
+                } catch (refreshErr) {
+                  // 保留原错误，继续退避重试。
+                }
+              }
+              await sleep(500 * attempt);
+            }
+          }
+        });
+      }
+    }
+
+    async function waitForMediaReady(mediaId, label, opts) {
+      let meta = null;
+      const pollMax = (opts && opts.pollAttempts) || 60;
+      for (let i = 0; i < pollMax; ++i) {
+        meta = await loadMediaMetadata(mediaId, true);
+        if (meta.status === 'ready') return meta;
+        if (meta.status === 'failed') {
+          throw new Error(meta.error || (label + '处理失败'));
+        }
+        await sleep(500);
+      }
+      throw new Error(label + '处理超时');
+    }
+
+    async function uploadVideoMultipart(file, mime, label, opts) {
+      const state = loadVideoUploadState(file);
+      let mediaId = null;
+      let partSize = 0;
+      let partCount = 0;
+      let uploadedSet = new Set();
+      let serverStatus = '';
+
+      if (state) {
+        setUploadStatus('检查断点...');
+        const status = await fetchMultipartStatus(state.media_id);
+        if (status) {
+          mediaId = state.media_id;
+          serverStatus = status.status || 'init';
+          partSize = Number(status.part_size) || Number(state.part_size) || 0;
+          partCount = Number(status.part_count) || Number(state.part_count) || 0;
+          (status.uploaded_parts || []).forEach(p => {
+            uploadedSet.add(Number(p.part_number));
+          });
+        } else {
+          // 会话可能已完成/过期；先看 media 是否已经 ready/processing。
+          try {
+            const meta = await loadMediaMetadata(state.media_id, true);
+            if (meta.status === 'ready' || meta.status === 'processing' ||
+                meta.status === 'uploaded') {
+              mediaId = state.media_id;
+              serverStatus = meta.status;
+            }
+          } catch (e) {}
+          if (!mediaId) clearVideoUploadState(file);
+        }
+      }
+
+      if (!mediaId) {
+        setUploadStatus('初始化上传...');
+        const init = await apiPost('/api/media/upload/init', {
+          kind: 'video',
+          mime_type: mime,
+          size_bytes: file.size,
+          filename: file.name || 'video',
+          multipart: true
+        });
+        if (init.upload_method !== 'multipart') {
+          throw new Error('服务端未启用视频分片上传');
+        }
+        mediaId = init.media_id;
+        partSize = Number(init.part_size);
+        partCount = Number(init.part_count);
+        serverStatus = 'init';
+        uploadedSet = new Set();
+        saveVideoUploadState(file, {
+          media_id: mediaId,
+          part_size: partSize,
+          part_count: partCount,
+          expires_at: Number(init.expires_at) || 0,
+          file_name: file.name || '',
+          file_size: file.size,
+          last_modified: file.lastModified || 0
+        });
+      }
+
+      if (partSize <= 0 || partCount <= 0 || partCount > 10000) {
+        throw new Error('服务端返回的分片参数无效');
+      }
+      if (serverStatus === 'failed') {
+        throw new Error('视频处理失败，请重新上传');
+      }
+
+      if (serverStatus === 'uploaded') {
+        setUploadStatus('确认上传...');
+        await apiPost('/api/media/upload/complete', {media_id: mediaId});
+      } else if (serverStatus !== 'ready' && serverStatus !== 'processing') {
+        await uploadMissingParts(file, mediaId, partSize, partCount,
+                                 uploadedSet, opts || {});
+        // complete 可能因为最后一片还没落盘/并发返回 409；补传后重试。
+        for (let attempt = 0; ; ++attempt) {
+          try {
+            setUploadStatus('确认上传...');
+            await apiPost('/api/media/upload/complete', {media_id: mediaId});
+            break;
+          } catch (e) {
+            if (e.status !== 409 || attempt >= 2) throw e;
+            const status = await fetchMultipartStatus(mediaId);
+            if (!status) throw e;
+            partSize = Number(status.part_size) || partSize;
+            partCount = Number(status.part_count) || partCount;
+            uploadedSet = new Set(
+              (status.uploaded_parts || []).map(p => Number(p.part_number)));
+            await uploadMissingParts(file, mediaId, partSize, partCount,
+                                     uploadedSet, opts || {});
+          }
+        }
+      }
+
+      setUploadStatus(label === '视频'
+        ? '服务端处理视频（必要时转码）...'
+        : '服务端处理中...');
+      const meta = await waitForMediaReady(mediaId, label, opts || {});
+      clearVideoUploadState(file);
+      return {mediaId, meta};
+    }
+
     // 上传期间锁住加号与已启用的附件入口，避免并发上传互相覆盖状态提示。
     function setAttachmentBusy(busy) {
       ['plus-btn', 'attach-image', 'attach-video', 'attach-file'].forEach(id => {
@@ -692,6 +1001,9 @@
     // 返回 media_id 与最新元数据（文件在 complete 时已同步 ready）。
     async function uploadMediaAsset(file, kind, mime, label, options) {
       const opts = options || {};
+      if (kind === 'video') {
+        return await uploadVideoMultipart(file, mime, label, opts);
+      }
       setUploadStatus('上传中 0%');
       const initResp = await fetch(logicBase + '/api/media/upload/init', {
         method: 'POST',
@@ -730,19 +1042,7 @@
         throw new Error(doneBody.message || ('确认上传失败 HTTP ' + doneResp.status));
       }
 
-      let meta = null;
-      const pollMax = opts.pollAttempts || 60;
-      for (let i = 0; i < pollMax; ++i) {
-        meta = await loadMediaMetadata(mediaId, true);
-        if (meta.status === 'ready') break;
-        if (meta.status === 'failed') {
-          throw new Error(meta.error || (label + '处理失败'));
-        }
-        await sleep(500);
-      }
-      if (!meta || meta.status !== 'ready') {
-        throw new Error(label + '处理超时');
-      }
+      const meta = await waitForMediaReady(mediaId, label, opts);
       return { mediaId, meta };
     }
 
@@ -1666,6 +1966,11 @@
            const imageContent = extractImageContent(m.content);
            const videoContent = extractVideoContent(m.content);
            const fileContent = extractFileContent(m.content);
+           // history 批量接口会把 media 元数据挂在消息上；
+           // 挂到 content 上，hydrate 时优先使用，避免逐张再 GET。
+           if (imageContent && m.media) imageContent.media = m.media;
+           if (videoContent && m.media) videoContent.media = m.media;
+           if (fileContent && m.media) fileContent.media = m.media;
            const renderContent =
              videoContent || imageContent || fileContent || text;
 

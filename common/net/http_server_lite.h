@@ -100,6 +100,11 @@ class HttpResponse {
 
 using HttpCallback = std::function<void(const HttpRequest&, HttpResponse*)>;
 
+// 异步业务回调：业务线程处理完后必须调用 done()，服务器才会写响应。
+// done() 可以从任意线程调用，内部会投递回 IO 线程。
+using HttpAsyncCallback = std::function<void(
+    const HttpRequest&, HttpResponse*, std::function<void()>)>;
+
 class HttpServerLite {
    public:
     struct Impl;
@@ -112,8 +117,10 @@ class HttpServerLite {
     HttpServerLite(const HttpServerLite&) = delete;
     HttpServerLite& operator=(const HttpServerLite&) = delete;
 
-    // 设置业务请求处理回调。
+    // 设置同步业务请求处理回调（web_demo 使用）。
     void setHttpCallback(HttpCallback cb);
+    // 设置异步业务请求处理回调（Logic 使用）；设置后优先于同步回调。
+    void setAsyncHttpCallback(HttpAsyncCallback cb);
     // 设置 IO 线程数（>=1，包含 accept 线程本身）。
     void setThreadNum(int n);
 

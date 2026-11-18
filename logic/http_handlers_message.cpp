@@ -11,10 +11,13 @@
 #include "http_server.h"
 #include "http_server_internal.h"
 #include "logging.h"
+#include "media_cache.h"
 #include "media_dao.h"
 #include "media_id.h"
+#include "media_read.h"
 #include "model.h"
 #include "proto_enums.h"
+#include "s3_client.h"
 #include "spark_push.pb.h"
 
 namespace sparkpush {
@@ -32,6 +35,153 @@ size_t Utf8CharCount(const std::string& value) {
         if ((c & 0xC0) != 0x80) ++count;
     }
     return count;
+}
+
+struct MediaBrief {
+    int64_t owner_id{0};
+    std::string kind;
+    std::string status;
+    std::string session_id;
+    std::string thumb_url;
+    int64_t thumb_expires_at{0};
+    std::string original_url;
+    int64_t original_expires_at{0};
+    nlohmann::json data;
+};
+
+std::string ExtractMediaIdFromContent(const std::string& content_json) {
+    if (content_json.empty()) return {};
+    try {
+        const auto root = nlohmann::json::parse(content_json);
+        if (!root.is_object()) return {};
+        if (root.contains("media_id") && root["media_id"].is_string()) {
+            return root["media_id"].get<std::string>();
+        }
+        if (root.contains("content") && root["content"].is_object()) {
+            const auto& inner = root["content"];
+            if (inner.contains("media_id") && inner["media_id"].is_string()) {
+                return inner["media_id"].get<std::string>();
+            }
+        }
+    } catch (const nlohmann::json::exception&) {
+    }
+    return {};
+}
+
+// 一次批量加载媒体元数据，并预先签好变体/原图 URL。
+// 调用方负责访问控制：history 只挂 session_id 匹配的媒体，
+// 头像只使用 owner_id 匹配的 ready 图片。
+bool LoadMediaBriefs(MediaDao* media_dao, MediaCache* media_cache, S3Client* s3,
+                     const std::string& cdn_base_url,
+                     const std::string& expected_session_id, int ttl_seconds,
+                     const std::vector<std::string>& media_ids,
+                     std::unordered_map<std::string, MediaBrief>* out,
+                     std::string* err) {
+    if (!media_dao || !out) {
+        if (err) *err = "invalid arguments";
+        return false;
+    }
+    out->clear();
+    if (media_ids.empty()) return true;
+    if (!s3 || !s3->ready()) {
+        if (err) *err = "s3 client is not ready";
+        return false;
+    }
+
+    std::unordered_map<std::string, CachedMedia> loaded;
+    if (!LoadMediaManyWithVariants(media_dao, media_cache, media_ids, &loaded,
+                                   err)) {
+        return false;
+    }
+
+    // 历史消息的场景下，ready 媒体的 session_id 必须等于当前会话。
+    // 空 session 可能是“绑定前回源、绑定后写回”的旧缓存，强制回源一次。
+    if (!expected_session_id.empty()) {
+        std::vector<std::string> stale_ids;
+        for (const auto& item : loaded) {
+            if (item.second.object.session_id.empty()) {
+                stale_ids.push_back(item.first);
+            }
+        }
+        if (!stale_ids.empty()) {
+            std::unordered_map<std::string, CachedMedia> refreshed;
+            std::string refresh_err;
+            if (LoadMediaManyWithVariants(media_dao, media_cache, stale_ids,
+                                          &refreshed, &refresh_err, true)) {
+                for (auto& entry : refreshed) {
+                    loaded[entry.first] = std::move(entry.second);
+                }
+            } else {
+                LogWarn("refresh media cache for history failed: " +
+                        refresh_err);
+            }
+        }
+    }
+
+    for (const auto& item : loaded) {
+        const MediaObject& media = item.second.object;
+        MediaBrief brief;
+        brief.owner_id = media.owner_id;
+        brief.kind = media.kind;
+        brief.status = media.status;
+        brief.session_id = media.session_id;
+
+        nlohmann::json data;
+        data["media_id"] = media.media_id;
+        data["kind"] = media.kind;
+        data["status"] = media.status;
+        data["mime_type"] = media.mime_type;
+        data["size_bytes"] = media.size_bytes;
+        data["width"] = media.width;
+        data["height"] = media.height;
+        data["duration_ms"] = media.duration_ms;
+        data["dominant_color"] = media.dominant_color;
+        data["blur_hash"] = media.blur_hash;
+        data["original_name"] = media.original_name;
+
+        nlohmann::json variants_json = nlohmann::json::object();
+        if (media.status == "ready") {
+            for (const auto& variant : item.second.variants) {
+                nlohmann::json entry;
+                std::string variant_err;
+                if (!BuildVariantJson(variant, cdn_base_url, s3, ttl_seconds,
+                                      &entry, &variant_err)) {
+                    continue;
+                }
+                variants_json[variant.variant] = entry;
+                if (variant.variant == "thumb") {
+                    brief.thumb_url = entry.value("url", "");
+                    brief.thumb_expires_at = entry.value("expires_at", 0LL);
+                }
+            }
+
+            int64_t original_expires_at = 0;
+            const std::string original_url =
+                media.kind == "file"
+                    ? s3->PresignGetDownload(media.object_key, ttl_seconds,
+                                             media.original_name,
+                                             &original_expires_at)
+                    : s3->PresignGet(media.object_key, ttl_seconds,
+                                     &original_expires_at);
+            if (!original_url.empty()) {
+                brief.original_url = original_url;
+                brief.original_expires_at = original_expires_at;
+                data["original"] = {
+                    {"url", original_url},
+                    {"width", media.width},
+                    {"height", media.height},
+                    {"size_bytes", media.size_bytes},
+                    {"mime_type", media.mime_type},
+                    {"download_name", media.original_name},
+                    {"expires_at", original_expires_at},
+                };
+            }
+        }
+        data["variants"] = std::move(variants_json);
+        brief.data = std::move(data);
+        out->emplace(media.media_id, std::move(brief));
+    }
+    return true;
 }
 
 }  // namespace
@@ -227,6 +377,8 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
             WriteError(resp, 409, "media has already been used");
             return;
         }
+        // 绑定后 session_id 变化，读缓存必须失效，否则接收方可能读到旧的空 session。
+        if (media_cache_) media_cache_->Invalidate(media.media_id);
     }
 
     int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -374,6 +526,8 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
                                            &unbind_err)) {
                 LogError("UnbindMessage failed for " + media.media_id + ": " +
                          unbind_err);
+            } else if (media_cache_) {
+                media_cache_->Invalidate(media.media_id);
             }
         }
         WriteError(resp, 500, "send message to kafka failed");
@@ -459,15 +613,47 @@ void HttpApiServer::handleHistory(const HttpRequest& req, HttpResponse* resp) {
         }
         for (const auto& sender : senders) {
             UserBrief brief;
-            BuildUserBrief(media_dao_, s3_client_,
+            BuildUserBrief(media_dao_, media_cache_, s3_client_,
+                           media_variant_cdn_base_url_,
                            media_download_url_ttl_seconds_, sender, &brief);
             sender_views[sender.id] = std::move(brief);
         }
     }
 
+    // 历史消息里的媒体元数据一次批量查询，避免前端逐张
+    // GET /api/media/{id}。失败时退回旧行为，前端仍有单张 fallback。
+    std::vector<std::string> msg_media_ids(msgs.size());
+    std::vector<std::string> unique_media_ids;
+    std::unordered_set<std::string> seen_media_ids;
+    for (size_t i = 0; i < msgs.size(); ++i) {
+        if (msgs[i].msg_type != "image" && msgs[i].msg_type != "video" &&
+            msgs[i].msg_type != "file") {
+            continue;
+        }
+        const std::string media_id =
+            ExtractMediaIdFromContent(msgs[i].content_json);
+        if (media_id.empty()) continue;
+        msg_media_ids[i] = media_id;
+        if (seen_media_ids.insert(media_id).second) {
+            unique_media_ids.push_back(media_id);
+        }
+    }
+    std::unordered_map<std::string, MediaBrief> media_briefs;
+    if (!unique_media_ids.empty()) {
+        std::string media_err;
+        if (!LoadMediaBriefs(media_dao_, media_cache_, s3_client_,
+                             media_variant_cdn_base_url_, session_id,
+                             media_download_url_ttl_seconds_,
+                             unique_media_ids, &media_briefs, &media_err)) {
+            LogWarn("batch load media briefs failed: " + media_err);
+            media_briefs.clear();
+        }
+    }
+
     nlohmann::json data;
     data["messages"] = nlohmann::json::array();
-    for (const auto& m : msgs) {
+    for (size_t idx = 0; idx < msgs.size(); ++idx) {
+        const auto& m = msgs[idx];
         nlohmann::json entry;
         entry["msg_id"] = m.msg_id;
         entry["client_msg_id"] = m.client_msg_id;
@@ -495,6 +681,14 @@ void HttpApiServer::handleHistory(const HttpRequest& req, HttpResponse* resp) {
                 entry["content"] = nlohmann::json::parse(m.content_json);
             } catch (...) {
                 entry["content"] = m.content_json;
+            }
+        }
+        if (!msg_media_ids[idx].empty()) {
+            const auto media_it = media_briefs.find(msg_media_ids[idx]);
+            if (media_it != media_briefs.end() &&
+                media_it->second.session_id == session_id &&
+                media_it->second.status != "deleted") {
+                entry["media"] = media_it->second.data;
             }
         }
         data["messages"].push_back(std::move(entry));
@@ -669,6 +863,30 @@ void HttpApiServer::handleSingleSessionList(const HttpRequest& req,
     std::unordered_map<int64_t, User> peer_map;
     for (auto& peer : peers) peer_map[peer.id] = std::move(peer);
 
+    // 头像 media 一次批量加载；加载失败时回退旧的逐头像查询。
+    std::vector<std::string> avatar_media_ids;
+    std::unordered_set<std::string> seen_avatar_ids;
+    // peers 已经被 move 进 peer_map，这里必须从 peer_map 读取。
+    for (const auto& entry : peer_map) {
+        const User& peer = entry.second;
+        if (!peer.avatar_media_id.empty() &&
+            seen_avatar_ids.insert(peer.avatar_media_id).second) {
+            avatar_media_ids.push_back(peer.avatar_media_id);
+        }
+    }
+    std::unordered_map<std::string, MediaBrief> avatar_briefs;
+    bool avatar_batch_ok = true;
+    if (!avatar_media_ids.empty()) {
+        std::string avatar_err;
+        if (!LoadMediaBriefs(media_dao_, media_cache_, s3_client_,
+                             media_variant_cdn_base_url_, "",
+                             media_download_url_ttl_seconds_,
+                             avatar_media_ids, &avatar_briefs, &avatar_err)) {
+            LogWarn("batch load avatar media failed: " + avatar_err);
+            avatar_batch_ok = false;
+        }
+    }
+
     nlohmann::json data;
     data["sessions"] = nlohmann::json::array();
     for (const auto& s : sessions) {
@@ -682,9 +900,41 @@ void HttpApiServer::handleSingleSessionList(const HttpRequest& req,
         UserBrief brief;
         auto peer_it = peer_map.find(peer_id);
         if (peer_it != peer_map.end()) {
-            BuildUserBrief(media_dao_, s3_client_,
-                           media_download_url_ttl_seconds_, peer_it->second,
-                           &brief);
+            const User& peer = peer_it->second;
+            brief.user_id = peer.id;
+            brief.account = peer.account;
+            brief.name = peer.name;
+            brief.avatar_media_id = peer.avatar_media_id;
+            if (!peer.avatar_media_id.empty()) {
+                bool filled = false;
+                if (avatar_batch_ok) {
+                    const auto avatar_it =
+                        avatar_briefs.find(peer.avatar_media_id);
+                    if (avatar_it != avatar_briefs.end() &&
+                        avatar_it->second.owner_id == peer.id &&
+                        avatar_it->second.kind == "image" &&
+                        avatar_it->second.status == "ready") {
+                        if (!avatar_it->second.thumb_url.empty()) {
+                            brief.avatar_url = avatar_it->second.thumb_url;
+                            brief.avatar_expires_at =
+                                avatar_it->second.thumb_expires_at;
+                            filled = true;
+                        } else if (!avatar_it->second.original_url.empty()) {
+                            brief.avatar_url =
+                                avatar_it->second.original_url;
+                            brief.avatar_expires_at =
+                                avatar_it->second.original_expires_at;
+                            filled = true;
+                        }
+                    }
+                }
+                if (!filled && !avatar_batch_ok) {
+                    BuildUserBrief(media_dao_, media_cache_, s3_client_,
+                                   media_variant_cdn_base_url_,
+                                   media_download_url_ttl_seconds_, peer,
+                                   &brief);
+                }
+            }
         } else {
             brief.user_id = peer_id;
             brief.name = "User " + std::to_string(peer_id);

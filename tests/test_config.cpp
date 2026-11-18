@@ -166,6 +166,52 @@ TEST_CASE("media_memory_budget_mb 默认与解析") {
     std::remove(path.c_str());
 }
 
+TEST_CASE("媒体缓存与 CDN 配置默认与解析") {
+    Config defaults;
+    CHECK(defaults.media_cache_enabled);
+    CHECK(defaults.media_cache_ready_ttl_seconds == 600);
+    CHECK(defaults.media_cache_failed_ttl_seconds == 60);
+    CHECK(defaults.media_cache_pending_ttl_seconds == 1);
+    CHECK(defaults.media_variant_cdn_base_url.empty());
+    CHECK(defaults.media_variant_cache_control ==
+          "public, max-age=31536000, immutable");
+    CHECK(defaults.media_multipart_part_size_bytes == 8LL * 1024 * 1024);
+    CHECK(defaults.media_multipart_upload_ttl_seconds == 86400);
+    CHECK(defaults.media_upload_url_ttl_seconds == 900);
+    CHECK(defaults.media_multipart_cleanup_interval_seconds == 3600);
+    CHECK(defaults.media_multipart_cleanup_batch == 100);
+    CHECK(defaults.media_upload_orphan_ttl_seconds == 86400);
+
+    std::string path = WriteTempConfig(
+        "media_cache_enabled=false\n"
+        "media_cache_ready_ttl_seconds=120\n"
+        "media_cache_failed_ttl_seconds=30\n"
+        "media_cache_pending_ttl_seconds=2\n"
+        "media_variant_cdn_base_url=https://cdn.example.com/bucket\n"
+        "media_variant_cache_control=public, max-age=60\n"
+        "media_multipart_part_size_bytes=5242880\n"
+        "media_multipart_upload_ttl_seconds=3600\n"
+        "media_upload_url_ttl_seconds=600\n"
+        "media_multipart_cleanup_interval_seconds=60\n"
+        "media_multipart_cleanup_batch=20\n"
+        "media_upload_orphan_ttl_seconds=7200\n");
+    Config cfg = LoadConfig(path);
+    CHECK_FALSE(cfg.media_cache_enabled);
+    CHECK(cfg.media_cache_ready_ttl_seconds == 120);
+    CHECK(cfg.media_cache_failed_ttl_seconds == 30);
+    CHECK(cfg.media_cache_pending_ttl_seconds == 2);
+    CHECK(cfg.media_variant_cdn_base_url ==
+          "https://cdn.example.com/bucket");
+    CHECK(cfg.media_variant_cache_control == "public, max-age=60");
+    CHECK(cfg.media_multipart_part_size_bytes == 5242880);
+    CHECK(cfg.media_multipart_upload_ttl_seconds == 3600);
+    CHECK(cfg.media_upload_url_ttl_seconds == 600);
+    CHECK(cfg.media_multipart_cleanup_interval_seconds == 60);
+    CHECK(cfg.media_multipart_cleanup_batch == 20);
+    CHECK(cfg.media_upload_orphan_ttl_seconds == 7200);
+    std::remove(path.c_str());
+}
+
 TEST_CASE("媒体 worker 线程数：新配置与旧配置兼容") {
     {
         Config cfg;

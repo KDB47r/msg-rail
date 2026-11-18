@@ -99,6 +99,123 @@ std::string AttachmentDisposition(const std::string& name) {
            UriEncode(effective, false);
 }
 
+void AppendUtf8(std::string& out, unsigned long codepoint) {
+    if (codepoint <= 0x7F) {
+        out.push_back(static_cast<char>(codepoint));
+    } else if (codepoint <= 0x7FF) {
+        out.push_back(static_cast<char>(0xC0 | (codepoint >> 6)));
+        out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+    } else if (codepoint <= 0xFFFF) {
+        out.push_back(static_cast<char>(0xE0 | (codepoint >> 12)));
+        out.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+    } else if (codepoint <= 0x10FFFF) {
+        out.push_back(static_cast<char>(0xF0 | (codepoint >> 18)));
+        out.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (codepoint & 0x3F)));
+    }
+}
+
+std::string XmlUnescape(const std::string& input) {
+    std::string out;
+    out.reserve(input.size());
+    for (size_t i = 0; i < input.size(); ++i) {
+        if (input[i] != '&') {
+            out.push_back(input[i]);
+            continue;
+        }
+        if (input.compare(i, 5, "&amp;") == 0) {
+            out.push_back('&');
+            i += 4;
+        } else if (input.compare(i, 4, "&lt;") == 0) {
+            out.push_back('<');
+            i += 3;
+        } else if (input.compare(i, 4, "&gt;") == 0) {
+            out.push_back('>');
+            i += 3;
+        } else if (input.compare(i, 6, "&quot;") == 0) {
+            out.push_back('"');
+            i += 5;
+        } else if (input.compare(i, 6, "&apos;") == 0) {
+            out.push_back('\'');
+            i += 5;
+        } else if (input.compare(i, 2, "&#") == 0) {
+            // MinIO 会把 ETag 的引号编码成 &#34;。
+            const size_t end = input.find(';', i + 2);
+            if (end != std::string::npos) {
+                std::string number = input.substr(i + 2, end - i - 2);
+                unsigned long codepoint = 0;
+                try {
+                    if (!number.empty() &&
+                        (number[0] == 'x' || number[0] == 'X')) {
+                        codepoint = std::stoul(number.substr(1), nullptr, 16);
+                    } else {
+                        codepoint = std::stoul(number, nullptr, 10);
+                    }
+                } catch (...) {
+                    codepoint = 0;
+                }
+                if (codepoint > 0 && codepoint <= 0x10FFFF) {
+                    AppendUtf8(out, codepoint);
+                    i = end;
+                    continue;
+                }
+            }
+            out.push_back('&');
+        } else {
+            out.push_back('&');
+        }
+    }
+    return out;
+}
+
+std::string XmlEscape(const std::string& input) {
+    std::string out;
+    out.reserve(input.size());
+    for (char c : input) {
+        switch (c) {
+            case '&': out += "&amp;"; break;
+            case '<': out += "&lt;"; break;
+            case '>': out += "&gt;"; break;
+            default: out.push_back(c); break;
+        }
+    }
+    return out;
+}
+
+bool XmlTagValue(const std::string& xml, const std::string& tag,
+                 std::string* out) {
+    if (!out) return false;
+    const std::string open = "<" + tag + ">";
+    const std::string close = "</" + tag + ">";
+    const size_t begin = xml.find(open);
+    if (begin == std::string::npos) return false;
+    const size_t value_begin = begin + open.size();
+    const size_t end = xml.find(close, value_begin);
+    if (end == std::string::npos) return false;
+    *out = XmlUnescape(xml.substr(value_begin, end - value_begin));
+    return true;
+}
+
+std::vector<std::string> XmlBlocks(const std::string& xml,
+                                   const std::string& tag) {
+    std::vector<std::string> blocks;
+    const std::string open = "<" + tag + ">";
+    const std::string close = "</" + tag + ">";
+    size_t pos = 0;
+    while (true) {
+        const size_t begin = xml.find(open, pos);
+        if (begin == std::string::npos) break;
+        const size_t value_begin = begin + open.size();
+        const size_t end = xml.find(close, value_begin);
+        if (end == std::string::npos) break;
+        blocks.push_back(xml.substr(value_begin, end - value_begin));
+        pos = end + close.size();
+    }
+    return blocks;
+}
+
 std::string Sha256Hex(const std::string& data) {
     unsigned char digest[EVP_MAX_MD_SIZE];
     unsigned int digest_len = 0;
@@ -971,6 +1088,83 @@ std::string S3Client::PresignWithTimeForEndpoint(
     return url;
 }
 
+std::string S3Client::PresignUploadPartWithTime(
+    const std::string& object_key, const std::string& upload_id,
+    int part_number, int ttl_seconds, int64_t now_seconds,
+    int64_t* expires_at, std::string* err) const {
+    if (!ready_) {
+        if (err) *err = "s3 client is not initialized";
+        return {};
+    }
+    if (upload_id.empty() || part_number <= 0) {
+        if (err) *err = "invalid upload_id or part number";
+        return {};
+    }
+    if (ttl_seconds <= 0) ttl_seconds = cfg_.presign_ttl_seconds;
+
+    const Endpoint& ep = public_;
+    std::string date_only;
+    const std::string amz_date = ToAmzDate(now_seconds, &date_only);
+    const std::string scope =
+        date_only + "/" + cfg_.region + "/s3/aws4_request";
+
+    std::string path = ep.base_path;
+    if (path.empty() || path.back() != '/') path.push_back('/');
+    path += UriEncode(cfg_.bucket, false);
+    path.push_back('/');
+    path += UriEncode(object_key, true);
+
+    const std::string host = HostHeader(ep.host, ep.port, ep.tls);
+    const std::string credential =
+        UriEncode(cfg_.access_key + "/" + scope, false);
+    std::ostringstream query;
+    query << "X-Amz-Algorithm=" << kAlgorithm
+          << "&X-Amz-Credential=" << credential
+          << "&X-Amz-Date=" << amz_date
+          << "&X-Amz-Expires=" << ttl_seconds
+          << "&X-Amz-SignedHeaders=host"
+          << "&partNumber=" << part_number
+          << "&uploadId=" << UriEncode(upload_id, false);
+    const std::string canonical_query = query.str();
+    const std::string canonical_headers = "host:" + host + "\n";
+    const std::string canonical_request =
+        "PUT\n" + path + "\n" + canonical_query + "\n" + canonical_headers +
+        "\n" + "host" + "\n" + kUnsignedPayload;
+    const std::string string_to_sign =
+        std::string(kAlgorithm) + "\n" + amz_date + "\n" + scope + "\n" +
+        Sha256Hex(canonical_request);
+
+    auto k_date = HmacRaw("AWS4" + cfg_.secret_key, date_only);
+    auto k_region = HmacRaw(std::string(reinterpret_cast<char*>(k_date.data()),
+                                        k_date.size()),
+                            cfg_.region);
+    auto k_service = HmacRaw(std::string(reinterpret_cast<char*>(k_region.data()),
+                                         k_region.size()),
+                             "s3");
+    auto k_signing = HmacRaw(std::string(reinterpret_cast<char*>(k_service.data()),
+                                         k_service.size()),
+                             "aws4_request");
+    const std::string signature =
+        HmacHex(std::string(reinterpret_cast<char*>(k_signing.data()),
+                            k_signing.size()),
+                string_to_sign);
+
+    if (expires_at) *expires_at = now_seconds + ttl_seconds;
+    return ep.scheme + "://" + host + path + "?" + canonical_query +
+           "&X-Amz-Signature=" + signature;
+}
+
+std::string S3Client::PresignUploadPart(const std::string& object_key,
+                                        const std::string& upload_id,
+                                        int part_number, int ttl_seconds,
+                                        int64_t* expires_at) const {
+    const int64_t now = std::chrono::duration_cast<std::chrono::seconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+    return PresignUploadPartWithTime(object_key, upload_id, part_number,
+                                     ttl_seconds, now, expires_at, nullptr);
+}
+
 bool S3Client::SignedRequest(const std::string& method,
                              const std::string& object_key,
                              const std::string& content_type,
@@ -979,7 +1173,9 @@ bool S3Client::SignedRequest(const std::string& method,
                              std::string* response_etag,
                              std::string* response_content_type,
                              std::string* response_content_length,
-                             std::string* err) const {
+                             std::string* err,
+                             const std::string& cache_control,
+                             const std::string& query) const {
     if (!ready_) {
         if (err) *err = "s3 client is not initialized";
         return false;
@@ -996,15 +1192,20 @@ bool S3Client::SignedRequest(const std::string& method,
     const std::string host =
         HostHeader(internal_.host, internal_.port, internal_.tls);
     const std::string payload_hash = Sha256Hex(body);
-    const std::string canonical_headers =
-        "host:" + host + "\n" +
-        "x-amz-content-sha256:" + payload_hash + "\n" +
-        "x-amz-date:" + amz_date + "\n";
-    const std::string signed_headers =
-        "host;x-amz-content-sha256;x-amz-date";
+    std::string canonical_headers;
+    std::string signed_headers;
+    if (!cache_control.empty()) {
+        // SigV4 canonical header 必须按字典序，cache-control 在 host 之前。
+        canonical_headers += "cache-control:" + cache_control + "\n";
+        signed_headers += "cache-control;";
+    }
+    canonical_headers += "host:" + host + "\n" +
+                         "x-amz-content-sha256:" + payload_hash + "\n" +
+                         "x-amz-date:" + amz_date + "\n";
+    signed_headers += "host;x-amz-content-sha256;x-amz-date";
     const std::string canonical_request =
-        method + "\n" + path + "\n" + "" + "\n" + canonical_headers + "\n" +
-        signed_headers + "\n" + payload_hash;
+        method + "\n" + path + "\n" + query + "\n" + canonical_headers +
+        "\n" + signed_headers + "\n" + payload_hash;
     const std::string string_to_sign =
         std::string(kAlgorithm) + "\n" + amz_date + "\n" + scope + "\n" +
         Sha256Hex(canonical_request);
@@ -1033,7 +1234,7 @@ bool S3Client::SignedRequest(const std::string& method,
     parsed.scheme = internal_.scheme;
     parsed.host = internal_.host;
     parsed.port = internal_.port;
-    parsed.path = path;
+    parsed.path = query.empty() ? path : (path + "?" + query);
 
     std::vector<std::pair<std::string, std::string>> headers;
     headers.emplace_back("Host", host);
@@ -1042,6 +1243,9 @@ bool S3Client::SignedRequest(const std::string& method,
     headers.emplace_back("Authorization", authorization);
     if (!content_type.empty()) {
         headers.emplace_back("Content-Type", content_type);
+    }
+    if (!cache_control.empty()) {
+        headers.emplace_back("Cache-Control", cache_control);
     }
 
     HttpResponseData resp;
@@ -1146,7 +1350,8 @@ bool S3Client::GetObjectToFile(const std::string& object_key,
 bool S3Client::PutObject(const std::string& object_key,
                          const std::string& body,
                          const std::string& content_type, S3PutResult* out,
-                         std::string* err) const {
+                         std::string* err,
+                         const std::string& cache_control) const {
     std::string response_body;
     std::string etag;
     std::string response_content_type;
@@ -1154,7 +1359,7 @@ bool S3Client::PutObject(const std::string& object_key,
     int status = 0;
     if (!SignedRequest("PUT", object_key, content_type, body, &response_body,
                        &status, &etag, &response_content_type,
-                       &response_content_length, err)) {
+                       &response_content_length, err, cache_control)) {
         return false;
     }
     if (out) out->etag = etag;
@@ -1212,6 +1417,182 @@ bool S3Client::DeleteObject(const std::string& object_key,
     int status = 0;
     return SignedRequest("DELETE", object_key, "", "", &response_body, &status,
                          &etag, &content_type, &content_length, err);
+}
+
+bool S3Client::CreateMultipartUpload(const std::string& object_key,
+                                     const std::string& content_type,
+                                     std::string* upload_id,
+                                     std::string* err) const {
+    if (!upload_id) {
+        if (err) *err = "invalid upload_id output";
+        return false;
+    }
+    upload_id->clear();
+    std::string response_body;
+    std::string etag;
+    std::string response_content_type;
+    std::string content_length;
+    int status = 0;
+    if (!SignedRequest("POST", object_key, content_type, "", &response_body,
+                       &status, &etag, &response_content_type,
+                       &content_length, err, "", "uploads=")) {
+        return false;
+    }
+    if (status < 200 || status >= 300) {
+        if (err) {
+            *err = "S3 CreateMultipartUpload returned HTTP " +
+                   std::to_string(status) +
+                   (response_body.empty() ? "" : (": " + response_body));
+        }
+        return false;
+    }
+    if (!XmlTagValue(response_body, "UploadId", upload_id) ||
+        upload_id->empty()) {
+        if (err) *err = "S3 CreateMultipartUpload response missing UploadId";
+        return false;
+    }
+    return true;
+}
+
+bool S3Client::ListParts(const std::string& object_key,
+                         const std::string& upload_id,
+                         std::vector<S3MultipartPart>* parts,
+                         bool* no_such_upload, std::string* err) const {
+    if (!parts || upload_id.empty()) {
+        if (err) *err = "invalid arguments";
+        return false;
+    }
+    parts->clear();
+    if (no_such_upload) *no_such_upload = false;
+
+    std::string response_body;
+    std::string etag;
+    std::string response_content_type;
+    std::string content_length;
+    int status = 0;
+    const std::string query = "uploadId=" + UriEncode(upload_id, false);
+    if (!SignedRequest("GET", object_key, "", "", &response_body, &status,
+                       &etag, &response_content_type, &content_length, err,
+                       "", query)) {
+        return false;
+    }
+    if (status == 404 ||
+        response_body.find("<Code>NoSuchUpload</Code>") != std::string::npos) {
+        if (no_such_upload) *no_such_upload = true;
+        if (err) *err = "multipart upload not found";
+        return false;
+    }
+    if (status < 200 || status >= 300) {
+        if (err) {
+            *err = "S3 ListParts returned HTTP " + std::to_string(status) +
+                   (response_body.empty() ? "" : (": " + response_body));
+        }
+        return false;
+    }
+
+    for (const auto& block : XmlBlocks(response_body, "Part")) {
+        S3MultipartPart part;
+        std::string number_str;
+        std::string size_str;
+        if (!XmlTagValue(block, "PartNumber", &number_str) ||
+            !XmlTagValue(block, "ETag", &part.etag)) {
+            continue;
+        }
+        try {
+            part.part_number = std::stoi(number_str);
+        } catch (...) {
+            continue;
+        }
+        if (XmlTagValue(block, "Size", &size_str)) {
+            try {
+                part.size_bytes = std::stoll(size_str);
+            } catch (...) {
+                part.size_bytes = 0;
+            }
+        }
+        parts->push_back(std::move(part));
+    }
+    std::sort(parts->begin(), parts->end(),
+              [](const S3MultipartPart& a, const S3MultipartPart& b) {
+                  return a.part_number < b.part_number;
+              });
+    return true;
+}
+
+bool S3Client::CompleteMultipartUpload(
+    const std::string& object_key, const std::string& upload_id,
+    const std::vector<S3MultipartPart>& parts, S3PutResult* out,
+    std::string* err) const {
+    if (upload_id.empty() || parts.empty()) {
+        if (err) *err = "multipart upload has no parts";
+        return false;
+    }
+    std::ostringstream xml;
+    xml << "<CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">";
+    for (const auto& part : parts) {
+        xml << "<Part><PartNumber>" << part.part_number
+            << "</PartNumber><ETag>" << XmlEscape(part.etag)
+            << "</ETag></Part>";
+    }
+    xml << "</CompleteMultipartUpload>";
+
+    std::string response_body;
+    std::string etag;
+    std::string response_content_type;
+    std::string content_length;
+    int status = 0;
+    const std::string query = "uploadId=" + UriEncode(upload_id, false);
+    if (!SignedRequest("POST", object_key, "application/xml", xml.str(),
+                       &response_body, &status, &etag, &response_content_type,
+                       &content_length, err, "", query)) {
+        return false;
+    }
+    if (status < 200 || status >= 300 ||
+        response_body.find("<Error>") != std::string::npos) {
+        if (err) {
+            *err = "S3 CompleteMultipartUpload returned HTTP " +
+                   std::to_string(status) +
+                   (response_body.empty() ? "" : (": " + response_body));
+        }
+        return false;
+    }
+    if (out) {
+        std::string response_etag;
+        out->etag = XmlTagValue(response_body, "ETag", &response_etag)
+                        ? response_etag
+                        : etag;
+    }
+    return true;
+}
+
+bool S3Client::AbortMultipartUpload(const std::string& object_key,
+                                    const std::string& upload_id,
+                                    std::string* err) const {
+    if (upload_id.empty()) {
+        if (err) *err = "empty upload_id";
+        return false;
+    }
+    std::string response_body;
+    std::string etag;
+    std::string response_content_type;
+    std::string content_length;
+    int status = 0;
+    const std::string query = "uploadId=" + UriEncode(upload_id, false);
+    if (!SignedRequest("DELETE", object_key, "", "", &response_body, &status,
+                       &etag, &response_content_type, &content_length, err,
+                       "", query)) {
+        return false;
+    }
+    if ((status >= 200 && status < 300) || status == 404 ||
+        response_body.find("<Code>NoSuchUpload</Code>") != std::string::npos) {
+        return true;
+    }
+    if (err) {
+        *err = "S3 AbortMultipartUpload returned HTTP " +
+               std::to_string(status) +
+               (response_body.empty() ? "" : (": " + response_body));
+    }
+    return false;
 }
 
 }  // namespace sparkpush

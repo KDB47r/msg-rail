@@ -15,6 +15,7 @@
 #include "http_server.h"
 #include "kafka_producer.h"
 #include "logging.h"
+#include "media_cache.h"
 #include "media_dao.h"
 #include "message_dao.h"
 #include "mysql_pool.h"
@@ -136,6 +137,10 @@ int RunLogic(const Config& cfg) {
         return 1;
     }
     RedisStore redis_store(&redis_pool);
+    MediaCache media_cache(&redis_pool, cfg.media_cache_enabled,
+                           cfg.media_cache_ready_ttl_seconds,
+                           cfg.media_cache_failed_ttl_seconds,
+                           cfg.media_cache_pending_ttl_seconds);
     FriendService friend_service(&friend_dao, &redis_store);
 
     // 媒体对象存储客户端。MinIO 未启动时 Init 仍可成功（只解析 endpoint），
@@ -208,11 +213,12 @@ int RunLogic(const Config& cfg) {
                              &conversation_store, &user_dao, &friend_service,
                              &group_dao, &group_member_dao, &redis_store,
                              &producer, &broadcast_producer, &danmaku_dao,
-                             &media_dao, &s3_client, cfg);
+                             &media_dao, &s3_client, &media_cache, cfg);
     httpServer.setThreadNum(cfg.http_threads);
     LogInfo("Logic HTTP server listening on port " +
             std::to_string(cfg.http_port) + " with " +
-            std::to_string(cfg.http_threads) + " IO threads");
+            std::to_string(cfg.http_threads) + " IO threads, " +
+            std::to_string(cfg.http_worker_threads) + " worker threads");
 
     // 优雅关闭：收到 SIGTERM/SIGINT 后退出 HTTP 服务器并关闭 gRPC
     InstallSignalHandler([&httpServer, &server]() {

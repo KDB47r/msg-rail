@@ -210,6 +210,21 @@ CREATE TABLE IF NOT EXISTS `media_task` (
   KEY `idx_type_status_next` (`task_type`, `status`, `next_run_at`, `id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 视频/大文件 multipart 上传会话；complete/abort 后删除。
+CREATE TABLE IF NOT EXISTS `media_multipart_upload` (
+  `media_id` VARCHAR(32) NOT NULL,
+  `upload_id` VARCHAR(512) NOT NULL,
+  `part_size` INT NOT NULL,
+  `parts_total` INT NOT NULL,
+  `expires_at` TIMESTAMP NOT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+      ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`media_id`),
+  UNIQUE KEY `uk_upload_id` (`upload_id`),
+  KEY `idx_expires` (`expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 INSERT IGNORE INTO `user` (`id`, `account`, `name`, `password_hash`) VALUES
 (1, 'alice', 'Alice', 'e10adc3949ba59abbe56e057f20f883e'),
 (2, 'bob', 'Bob', 'e10adc3949ba59abbe56e057f20f883e'),

@@ -152,6 +152,39 @@ TEST_CASE("S3: 文件下载 URL 带 Content-Disposition 且参与签名") {
     CHECK(plain != url);
 }
 
+TEST_CASE("S3: multipart UploadPart URL 含 part/uploadId 且参与签名") {
+    S3Client client;
+    std::string err;
+    REQUIRE(client.Init(TestS3Config(), &err));
+
+    int64_t expires_at = 0;
+    const std::string url = client.PresignUploadPartWithTime(
+        "media/m_abc/original.mp4", "upload/abc+def=", 2, 900, 1700000000,
+        &expires_at, &err);
+    REQUIRE_FALSE(url.empty());
+    CHECK(expires_at == 1700000900);
+    CHECK(url.find("partNumber=2") != std::string::npos);
+    CHECK(url.find("uploadId=upload%2Fabc%2Bdef%3D") != std::string::npos);
+    CHECK(url.find("X-Amz-SignedHeaders=host") != std::string::npos);
+
+    const size_t signed_pos = url.find("X-Amz-SignedHeaders=host");
+    const size_t part_pos = url.find("partNumber=2");
+    const size_t upload_pos = url.find("uploadId=");
+    const size_t sig_pos = url.find("X-Amz-Signature=");
+    REQUIRE(signed_pos != std::string::npos);
+    REQUIRE(part_pos != std::string::npos);
+    REQUIRE(upload_pos != std::string::npos);
+    REQUIRE(sig_pos != std::string::npos);
+    CHECK(signed_pos < part_pos);
+    CHECK(part_pos < upload_pos);
+    CHECK(upload_pos < sig_pos);
+
+    const std::string url_part1 = client.PresignUploadPartWithTime(
+        "media/m_abc/original.mp4", "upload/abc+def=", 1, 900, 1700000000,
+        nullptr, nullptr);
+    CHECK(url_part1 != url);
+}
+
 TEST_CASE("S3: 非法 endpoint 初始化失败") {
     S3Config cfg = TestS3Config();
     cfg.endpoint = "ftp://127.0.0.1:9002";

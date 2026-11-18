@@ -214,7 +214,9 @@ void HttpApiServer::handleFriendList(const HttpRequest& req,
         user.name = info.name;
         user.avatar_media_id = info.avatar_media_id;
         UserBrief brief;
-        BuildUserBrief(media_dao_, s3_client_, media_download_url_ttl_seconds_,
+        BuildUserBrief(media_dao_, media_cache_, s3_client_,
+                       media_variant_cdn_base_url_,
+                       media_download_url_ttl_seconds_,
                        user, &brief);
         nlohmann::json entry = UserBriefToJson(brief, false);
         entry["created_at"] = info.created_at_ms / 1000;
@@ -272,7 +274,9 @@ void HttpApiServer::handleFriendRequests(const HttpRequest& req,
         auto it = user_map.find(id);
         if (it == user_map.end()) return FallbackBrief(id);
         UserBrief brief;
-        BuildUserBrief(media_dao_, s3_client_, media_download_url_ttl_seconds_,
+        BuildUserBrief(media_dao_, media_cache_, s3_client_,
+                       media_variant_cdn_base_url_,
+                       media_download_url_ttl_seconds_,
                        it->second, &brief);
         return brief;
     };
@@ -391,7 +395,9 @@ void HttpApiServer::handleOpenSingleSession(const HttpRequest& req,
     }
 
     UserBrief brief;
-    BuildUserBrief(media_dao_, s3_client_, media_download_url_ttl_seconds_,
+    BuildUserBrief(media_dao_, media_cache_, s3_client_,
+                       media_variant_cdn_base_url_,
+                       media_download_url_ttl_seconds_,
                    peer, &brief);
     nlohmann::json data;
     data["session_id"] = session.id;

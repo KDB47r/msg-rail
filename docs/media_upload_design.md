@@ -1596,7 +1596,7 @@ media_max_attempts=3
 | D6 | 模糊预览 | micro+CSS vs BlurHash/ThumbHash | **micro+CSS（v1）** | 决定依赖和消息字段 |
 | D7 | 视频 v1 | MP4 直链+封面 vs HLS 转码 | **MP4 直链+封面** | 决定转码/播放器复杂度 |
 | D8 | 媒体消息入口 | 先 HTTP 发送 vs 同时改 WS | **先 HTTP** | 决定 Comet/proto 改动量 |
-| D9 | 分片上传 | v1 不做 vs 一开始就做 | **v1 不做，P4 再加** | 决定上传基础设施复杂度 |
+| D9 | 分片上传 | v1 不做 vs 一开始就做 | **v1 不做，P4 再加**（2026-11-18 已实现，见 [`video_multipart_resumable_design.md`](video_multipart_resumable_design.md)） | 决定上传基础设施复杂度 |
 
 ### 15.1 我建议你先确认的最小组合
 

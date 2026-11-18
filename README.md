@@ -10,7 +10,7 @@ MsgRail（讯驿）是一个类 IM 的消息推送系统，重点不在聊天界
 - **单聊**：用户之间的实时消息收发
 - **图片消息**：MinIO/S3 浏览器直传、异步生成缩略图、聊天气泡清晰预览、点击查看大图
 - **文件消息**：≤ 50 MiB 任意文件直传，卡片展示，签名 URL + `Content-Disposition` 强制下载
-- **视频消息**：≤ 100 MiB MP4/WebM 直传，worker 用 ffprobe 校验、ffmpeg 抽 JPEG 封面；MP4 + HEVC 自动转码为 H.264/AAC，聊天卡片 + 弹窗播放
+- **视频消息**：≤ 100 MiB MP4/WebM 分片直传（支持断点续传），worker 用 ffprobe 校验、ffmpeg 抽 JPEG 封面；MP4 + HEVC 自动转码为 H.264/AAC，聊天卡片 + 弹窗播放
 - **聊天室**：房间加入/离开、房间广播、在线人数
 - **弹幕**：按视频时间轴发送和拉取
 - **广播**：全站广播、房间广播
@@ -113,6 +113,9 @@ mysql -uroot -p123456 < sql/schema.sql
 
 # 已有数据库只补媒体表：不删除现有用户/消息，可重复执行
 mysql -uroot -p123456 spark_push < sql/migrations/001_media_tables.sql
+
+# 视频 multipart 上传会话表（2026-11-18）
+mysql -uroot -p123456 spark_push < sql/migrations/004_media_multipart_upload.sql
 ```
 
 ### 3. 编译
@@ -174,6 +177,7 @@ http://127.0.0.1:9001/index.html
 | 认证 | `POST /api/login`、`POST /api/register` |
 | 消息 | `POST /api/message/send`、`GET /api/session/history`、`GET /api/session/unread`、`POST /api/session/mark_read`、`GET /api/session/list_single` |
 | 媒体 | `POST /api/media/upload/init`、`POST /api/media/upload/complete`、`GET /api/media/{media_id}` |
+| 视频分片 | `POST /api/media/upload/multipart/part_urls`、`POST /api/media/upload/multipart/status`、`POST /api/media/upload/abort` |
 | 聊天室 | `/api/chatroom/join`、`/leave`、`/unsubscribe`、`/online_count`、`/list` |
 | 弹幕 | `POST /api/danmaku/send`、`GET /api/danmaku/list` |
 | 管理 | `/api/admin/chatroom/create`、`/api/admin/chatroom/list`、`/api/admin/broadcast` |
@@ -223,7 +227,9 @@ ws://127.0.0.1:9200/ws?token=<token>
 - 推送和持久化使用独立消费组，互不影响
 - MySQL 使用 `INSERT ... ON DUPLICATE KEY UPDATE` 保证重复消费幂等
 - 推送失败按 `100ms → 400ms → 1600ms` 退避重试，耗尽后记录 `[DLQ]` 日志
-- Redis 保存 token、用户路由、会话序号和房间在线状态
+- 视频 multipart 由服务端 `ListParts` 校验分片；complete 幂等，崩溃后用对象 HEAD 恢复
+- media_worker 定期清理过期 multipart 和长期 `init` 的单次 PUT 孤儿
+- Redis 保存 token、用户路由、会话序号和房间在线状态；媒体元数据缓存故障时回退 MySQL
 
 ## 图片上传与异步处理性能优化
 
@@ -243,6 +249,11 @@ ws://127.0.0.1:9200/ws?token=<token>
 | 内存控制 | `MemoryLimiter`，图片任务共享 1GiB 预算；lossless/progressive 单独估算 |
 | 任务队列 | 图片/视频拆成 3+1 lane，`task_type` 过滤 + 复合索引 |
 | 任务延迟 | `media_worker_poll_ms` 500→100 |
+| 视频上传 | S3 multipart 分片 + localStorage 断点续传 + 过期上传清理 |
+| 读路径 | history 内嵌媒体元数据；会话列表头像批量查询 |
+| 读缓存 | `media:meta:v1:{id}` Redis 缓存；ready 600s、处理中 1s；绑定/解绑主动失效 |
+| 变体 CDN | micro/thumb/preview/poster 稳定公开 URL + 1 年 `Cache-Control`；原图/文件仍预签名 |
+| 读接口并发 | 阻塞 handler 移入 8 线程业务池，4 个 IO 线程只负责收发 |
 
 ### 优化前后数据
 
@@ -258,6 +269,9 @@ ws://127.0.0.1:9200/ws?token=<token>
 | WebP 45.4MP lossy 端到端 | 945.6ms / 355MiB | **800.7ms / 74MiB** | 零拷贝 + YUV 缩小 |
 | WebP 12MP lossy 端到端 | 379.4ms / 97MiB | **266.6ms / 23MiB** | 零拷贝 + YUV 缩小 |
 | WebP preview 编码（LRC） | 157ms / 70.9KiB | **59.7ms / 74.1KiB** | method=2，体积 +4.5% |
+| 历史 21 张图读路径 | 26.8ms / 21 次 media GET / 约 44 SQL | **约 9ms / 0 次额外 GET / 4 SQL** | history 内嵌 media |
+| 历史 32 个媒体读路径（冷→热缓存） | 8.2ms | **5.3ms** | Redis 热缓存，媒体 SQL 2→0 |
+| 单张 media GET（热缓存） | 1~3ms | **1.1ms** | Redis 命中 |
 
 队列与上传延迟：
 
@@ -280,12 +294,241 @@ ws://127.0.0.1:9200/ws?token=<token>
 
 worker 峰值 RSS：500ms poll 下约 192MiB，100ms poll 下约 154MiB（5 张顺序上传）。
 
+Logic history 读接口并发（C++ `load_tester`，客户端与服务端同机 16 核）：
+
+| 客户端线程 | 同步（4 IO 线程） | 异步（4 IO + 8 worker） | 提升 |
+|---:|---:|---:|---:|
+| 8 | 661.2 req/s | **897.9 req/s** | +35.8% |
+| 16 | 669.5 req/s | **936.2 req/s** | +39.9% |
+| 32 | 652.8 req/s | **1009.2 req/s** | +54.6% |
+
+视频 multipart 上传（18.73 MiB / 8 MiB 分片 / 3 片）：
+
+| 场景 | 上传总计 | 说明 |
+|---|---:|---|
+| single PUT | 71.5ms | 旧链路 |
+| multipart full | 93.8ms | 多约 22ms 请求开销 |
+| multipart resume（已传第 1 片） | **57.4ms** | 只补剩余 2 片，少约 39% |
+
+媒体读缓存与 CDN：
+
+- history 32 个媒体：冷缓存 8.2ms → 热缓存 **5.3ms**，媒体批量 SQL 2→0；单张 media GET 热缓存 **1.1ms**；
+- C++ history 压测：关闭缓存 → 热缓存，8 线程 1039→**1344 req/s**（+29%），32 线程 1184→**1602 req/s**（+35%）；
+- `micro/thumb/preview/poster` 用稳定公开 URL，可接 CDN；原图、文件、`playback` 仍用 15 分钟预签名；
+- 公开变体是“不可猜 URL”而不是强鉴权，拿到 URL 的人可匿名访问缩略图/预览图/封面；生产可再换 CDN 签名；
+- 变体上传带 `Cache-Control: public, max-age=31536000, immutable`；旧对象需要重新处理或由 CDN 响应头覆盖。
+
 说明：
 
 - 45MP PNG 文件约 81MiB，超过生产 20MiB 限制，只用于压力测试；真实可上传样本是 8~12MP PNG。
 - PNG 这轮主要降内存，解码时间基本不变；要降时间需要 libspng/zlib-ng 等新依赖。
 - 这些数据不包含前端 500ms 轮询；浏览器用户可见延迟还会叠加最多 500ms。
-- 详细数据见 [`docs/benchmark.md`](docs/benchmark.md) 第 12~16 节、[`docs/png_webp_decode_optimization_design.md`](docs/png_webp_decode_optimization_design.md)、[`docs/media_queue_split_design.md`](docs/media_queue_split_design.md)。
+- 同步/异步对照只切换 HTTP 回调，其余代码和数据相同；Python 混合压测会先被客户端 GIL 限制，服务端能力以 C++ 压测为准。
+- 详细数据见 [`docs/benchmark.md`](docs/benchmark.md) 第 12~20 节、[`docs/media_redis_cache_cdn_design.md`](docs/media_redis_cache_cdn_design.md)、[`docs/video_multipart_resumable_design.md`](docs/video_multipart_resumable_design.md)、[`docs/png_webp_decode_optimization_design.md`](docs/png_webp_decode_optimization_design.md)、[`docs/media_queue_split_design.md`](docs/media_queue_split_design.md)。
+
+## 视频分片上传与断点续传
+
+视频 ≤ 100 MiB 走 MinIO/S3 multipart；图片和普通文件仍走单次 PUT。旧客户端不传 `multipart:true` 时也保持单次 PUT，兼容现有调用。
+
+### 上传流程
+
+```text
+video init(multipart=true)
+  → media_object(status=init)
+  → S3 CreateMultipartUpload → upload_id
+  → media_multipart_upload(part_size/part_count/expires_at)
+  → 返回 media_id + part_size + part_count
+
+浏览器
+  → 请求缺失分片的预签名 URL
+  → 3 并发 PUT 分片到 MinIO
+  → 失败重试；URL 过期(403)重新取 URL
+
+complete
+  → 服务端 ListParts（不信任客户端 ETag）
+  → 校验分片数量/大小/总大小
+  → CompleteMultipartUpload
+  → HEAD 校验
+  → MarkUploaded + EnqueueTask(process_video)
+  → 删除 media_multipart_upload
+```
+
+### 接口
+
+`POST /api/media/upload/init`
+
+```json
+{
+  "kind": "video",
+  "mime_type": "video/mp4",
+  "size_bytes": 19639683,
+  "filename": "demo.mp4",
+  "multipart": true
+}
+```
+
+分片响应：
+
+```json
+{
+  "code": 0,
+  "data": {
+    "media_id": "m_...",
+    "status": "init",
+    "upload_method": "multipart",
+    "part_size": 8388608,
+    "part_count": 3,
+    "expires_at": 1795060000,
+    "max_bytes": 104857600
+  }
+}
+```
+
+不返回 S3 `upload_id`，它只保存在服务端 `media_multipart_upload` 表。
+
+`POST /api/media/upload/multipart/part_urls`
+
+```json
+{ "media_id": "m_...", "part_numbers": [1, 2, 3] }
+```
+
+返回每个 part 的短期预签名 UploadPart URL：
+
+```json
+{
+  "code": 0,
+  "data": {
+    "media_id": "m_...",
+    "parts": [
+      { "part_number": 1, "url": "http://127.0.0.1:9002/...", "expires_at": 1795060900 }
+    ]
+  }
+}
+```
+
+`POST /api/media/upload/multipart/status`
+
+```json
+{ "media_id": "m_..." }
+```
+
+```json
+{
+  "code": 0,
+  "data": {
+    "media_id": "m_...",
+    "status": "init",
+    "part_size": 8388608,
+    "part_count": 3,
+    "uploaded_parts": [
+      { "part_number": 1, "size_bytes": 8388608 }
+    ],
+    "expires_at": 1795060000
+  }
+}
+```
+
+- `status=init`：还有分片没传；
+- `status=uploaded`：S3 已完成但 DB 可能还没入队，前端再调一次 complete；
+- `status=processing/ready`：直接轮询媒体状态；
+- 404/409：会话不存在或已过期，前端清理本地状态后重新 init。
+
+`POST /api/media/upload/complete`
+
+请求只需要：
+
+```json
+{ "media_id": "m_..." }
+```
+
+服务端自己 `ListParts` 并完成 multipart，不需要浏览器提交 ETag。缺片返回 409，前端查 status 后补传。
+
+`POST /api/media/upload/abort`
+
+```json
+{ "media_id": "m_..." }
+```
+
+取消未完成上传：S3 AbortMultipartUpload + 删除会话 + media 标记 deleted。
+
+### 断点续传
+
+前端在 localStorage 保存：
+
+```json
+{
+  "media_id": "m_...",
+  "part_size": 8388608,
+  "part_count": 3,
+  "expires_at": 1795060000,
+  "file_name": "demo.mp4",
+  "file_size": 19639683,
+  "last_modified": 1795000000000
+}
+```
+
+- key 使用 `文件名 + 大小 + lastModified` 指纹；
+- 中断后重新选择同一个文件，先调 status 拿已上传分片，只补缺失部分；
+- 3 个分片并发上传；
+- 每片最多重试 3 次；403（URL 过期）会重新请求该片 URL；
+- complete 返回 409 缺片时，自动查状态、补传、再 complete；
+- 上传成功、abort 或过期后清理本地状态。
+
+限制：浏览器刷新后拿不到原 File 对象，**必须由用户重新选择同一个文件**才能续传；不做跨设备续传。
+
+### 过期上传清理
+
+`media_worker` maintenance 线程定期执行：
+
+1. 过期 `media_multipart_upload`：
+   - HEAD 对象，若已存在且大小匹配 → 补 `MarkUploaded + EnqueueTask`，避免误删已完成上传；
+   - 否则 AbortMultipartUpload、删除会话、标记 deleted；
+2. 过期 `status=init` 且没有 multipart 会话的单次 PUT 孤儿：
+   - 删除对象（不存在也继续）、标记 deleted。
+
+生产环境建议再配 S3/MinIO lifecycle `AbortIncompleteMultipartUpload` 作为兜底。
+
+### 配置
+
+| 配置 | 默认值 | 说明 |
+|---|---:|---|
+| `media_multipart_part_size_bytes` | 8 MiB | 分片大小，最小 5 MiB |
+| `media_multipart_upload_ttl_seconds` | 86400 | 上传会话有效期 |
+| `media_upload_url_ttl_seconds` | 900 | 分片 URL 有效期 |
+| `media_multipart_cleanup_interval_seconds` | 3600 | worker 清理周期 |
+| `media_multipart_cleanup_batch` | 100 | 每轮清理数量 |
+| `media_upload_orphan_ttl_seconds` | 86400 | init 孤儿媒体 TTL |
+
+### 兼容与限制
+
+- 视频上限仍是 **100 MiB**，分片不改变大小限制；
+- 图片/文件不进入 multipart；
+- 不传 `multipart:true` 的旧客户端继续走单次 PUT；
+- 分片上传需要 MinIO CORS 允许 PUT；`scripts/start_all.sh` 默认设置 `MINIO_API_CORS_ALLOW_ORIGIN=*`；
+- 一次上传只对应一个 media，浏览器同一时间仍只允许一个附件上传任务；
+- 未做服务端 sha256 强校验，worker 仍会读取视频头并校验格式/时长/像素。
+
+### 验证
+
+```bash
+ctest --test-dir build --output-on-failure
+python3 tests/video_multipart_e2e.py
+python3 tests/video_multipart_bench.py
+python3 tests/media_message_regression_e2e.py   # 旧单次 PUT 回归
+```
+
+当前结果：`ctest` 1/1、multipart E2E 13/13、媒体 E2E 23/23、用户功能 E2E 67/67。18.73 MiB / 3 片的本地 benchmark：单次 PUT 71.5ms、multipart 全量 93.8ms、续传阶段 57.4ms（少约 39%）。详见 [`docs/benchmark.md`](docs/benchmark.md) 第 20 节。
+
+### 代码位置
+
+| 模块 | 位置 |
+|---|---|
+| S3 multipart | `common/s3_client.cpp` |
+| 上传会话表 | `sql/migrations/004_media_multipart_upload.sql` |
+| 后端接口 | `logic/http_handlers_media.cpp` |
+| 前端续传 | `web_demo/static/index.html` |
+| 过期清理 | `media/media_worker_main.cpp` |
+| 设计文档 | [`docs/video_multipart_resumable_design.md`](docs/video_multipart_resumable_design.md) |
 
 ## 测试
 
@@ -308,6 +551,18 @@ python3 tests/media_message_regression_e2e.py
 
 # 真实图片上传链路 benchmark（init → PUT → complete → ready）
 python3 tests/media_upload_bench.py
+
+# 历史读路径 benchmark（history + 逐张/并发 media GET，只读）
+python3 tests/history_read_bench.py
+
+# 媒体 Redis 缓存 + CDN benchmark（冷/热缓存、SQL 次数、公开 URL，只读）
+python3 tests/media_cache_cdn_bench.py
+
+# 视频 multipart / 断点续传 / abort E2E
+python3 tests/video_multipart_e2e.py
+
+# 视频单次 PUT vs multipart vs 续传耗时
+python3 tests/video_multipart_bench.py
 ```
 
 压测和命令行客户端见 [`load_test/README.md`](load_test/README.md)。
@@ -334,6 +589,8 @@ python3 tests/media_upload_bench.py
 - [`docs/queue_split_benchmark.md`](docs/queue_split_benchmark.md)：旧共享池 vs 新 lane 的调度仿真结果与解读
 - [`docs/png_webp_decode_optimization_design.md`](docs/png_webp_decode_optimization_design.md)：PNG/WebP 解码优化（WebP 零拷贝、YUV 域缩小、PNG 逐行降采样）
 - [`docs/benchmark.md`](docs/benchmark.md)：图片处理管线 benchmark 命令、真实图片结果与优化前后对比
+- [`docs/media_redis_cache_cdn_design.md`](docs/media_redis_cache_cdn_design.md)：媒体元数据 Redis 缓存与变体 CDN 方案、验证结果
+- [`docs/video_multipart_resumable_design.md`](docs/video_multipart_resumable_design.md)：视频 multipart 分片上传、断点续传、过期上传清理方案与验证
 - [`docs/media_upload_design.md`](docs/media_upload_design.md)：图片/视频/语音上传与模糊预览设计草案
 - [`docs/media_api_spec.md`](docs/media_api_spec.md)：历史接口契约草案；图片/文件以实现文档为准，视频见视频实现文档
 - [`docs/user_profile_friend_unread_design.md`](docs/user_profile_friend_unread_design.md)：用户资料、好友关系、昵称/头像与未读消息技术方案（含数据模型、接口契约与状态机）

@@ -100,6 +100,7 @@ struct HttpServerLite::Impl
     asio::io_context io_ctx;
     asio::ip::tcp::acceptor acceptor;
     HttpCallback callback;
+    HttpAsyncCallback async_callback;
     std::string name;
     int threads{1};
     std::atomic<bool> stopped{false};
@@ -219,8 +220,11 @@ std::string BuildResponse(const HttpResponse& resp, bool keep_alive) {
 class Session : public std::enable_shared_from_this<Session> {
    public:
     // 初始化 llhttp 解析器并绑定各解析回调。
-    Session(asio::ip::tcp::socket sock, HttpCallback cb)
-        : socket_(std::move(sock)), callback_(std::move(cb)) {
+    Session(asio::ip::tcp::socket sock, HttpCallback cb,
+            HttpAsyncCallback async_cb)
+        : socket_(std::move(sock)),
+          callback_(std::move(cb)),
+          async_callback_(std::move(async_cb)) {
         llhttp_settings_init(&settings_);
         settings_.on_message_begin = OnMessageBegin;
         settings_.on_url = OnUrl;
@@ -254,10 +258,46 @@ class Session : public std::enable_shared_from_this<Session> {
                     return;
                 }
                 if (ctx_.complete) {
+                    const bool ka = ctx_.keep_alive;
+                    if (async_callback_) {
+                        auto self = shared_from_this();
+                        auto resp = std::make_shared<HttpResponse>();
+                        // 请求对象是解析器栈上的，异步业务线程需要一份拷贝。
+                        HttpRequest request = ctx_.req;
+                        ctx_.req.clear();
+                        ctx_.complete = false;
+                        auto done = [this, self, resp, ka]() {
+                            std::string out = BuildResponse(*resp, ka);
+                            // 从业务线程回到 IO 线程再写 socket。
+                            asio::post(
+                                socket_.get_executor(),
+                                [this, self, out = std::move(out), ka]() mutable {
+                                    WriteThen(std::move(out), ka);
+                                });
+                        };
+                        try {
+                            async_callback_(request, resp.get(), done);
+                        } catch (const std::exception& ex) {
+                            LogError("async http callback failed: " +
+                                     std::string(ex.what()));
+                            resp->setStatusCode(
+                                HttpResponse::k500InternalServerError);
+                            resp->setContentType("text/plain; charset=utf-8");
+                            resp->setBody("Internal Server Error");
+                            done();
+                        } catch (...) {
+                            LogError("async http callback failed");
+                            resp->setStatusCode(
+                                HttpResponse::k500InternalServerError);
+                            resp->setContentType("text/plain; charset=utf-8");
+                            resp->setBody("Internal Server Error");
+                            done();
+                        }
+                        return;
+                    }
+
                     HttpResponse resp;
-                    //**** 
                     if (callback_) callback_(ctx_.req, &resp);
-                    bool ka = ctx_.keep_alive;
                     std::string out = BuildResponse(resp, ka);
                     ctx_.req.clear();
                     ctx_.complete = false;
@@ -298,6 +338,7 @@ class Session : public std::enable_shared_from_this<Session> {
 
     asio::ip::tcp::socket socket_;
     HttpCallback callback_;
+    HttpAsyncCallback async_callback_;
     llhttp_t parser_{};
     llhttp_settings_t settings_{};
     ParseCtx ctx_{};
@@ -310,7 +351,9 @@ void DoAccept(HttpServerLite::Impl& impl) {
                                        asio::ip::tcp::socket sock) {
         // 有新连接时创建 Session；随后继续接受下一个连接。
         if (!ec) {
-            std::make_shared<Session>(std::move(sock), impl.callback)->Start();
+            std::make_shared<Session>(std::move(sock), impl.callback,
+                                      impl.async_callback)
+                ->Start();
         }
         if (!impl.stopped.load(std::memory_order_relaxed)) {
             DoAccept(impl);
@@ -330,6 +373,10 @@ HttpServerLite::~HttpServerLite() { stop(); }
 // 设置业务请求处理回调。
 void HttpServerLite::setHttpCallback(HttpCallback cb) {
     impl_->callback = std::move(cb);
+}
+
+void HttpServerLite::setAsyncHttpCallback(HttpAsyncCallback cb) {
+    impl_->async_callback = std::move(cb);
 }
 
 // 设置 IO 线程数，至少保留 1 个线程。

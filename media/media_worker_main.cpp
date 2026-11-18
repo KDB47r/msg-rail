@@ -305,7 +305,7 @@ bool ProcessVideoTask(sparkpush::MediaDao* dao, sparkpush::S3Client* s3,  //  vi
     const std::string poster_key = VideoPosterObjectKey(media.media_id);
     sparkpush::S3PutResult put_result;
     if (!s3->PutObject(poster_key, poster_bytes, "image/jpeg", &put_result,
-                       &err)) {
+                       &err, cfg.media_variant_cache_control)) {
         FailTask(dao, task, "upload video poster failed: " + err);
         return false;
     }
@@ -422,7 +422,8 @@ bool ProcessOneTask(sparkpush::MediaDao* dao, sparkpush::S3Client* s3,
             VariantObjectKey(media.media_id, processed_variant.variant);
         sparkpush::S3PutResult put_result;
         if (!s3->PutObject(key, processed_variant.bytes, "image/webp",
-                           &put_result, &err)) { // 上传三档webp
+                           &put_result, &err,
+                           cfg.media_variant_cache_control)) { // 上传三档webp
             FailTask(dao, task,
                      "upload " + processed_variant.variant + " failed: " + err);
             return false;
@@ -454,6 +455,107 @@ bool ProcessOneTask(sparkpush::MediaDao* dao, sparkpush::S3Client* s3,
 }  // namespace
 
 namespace sparkpush {
+
+namespace {
+
+int64_t WorkerNowSeconds() {
+    return std::chrono::duration_cast<std::chrono::seconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+// 清理过期 multipart 上传和长期 init 的孤儿媒体。
+// 对“S3 已合并但 DB 未更新”的对象做 HEAD 恢复，避免误删有效视频。
+void CleanupExpiredUploads(MediaDao* dao, S3Client* s3, const Config& cfg) {
+    if (!dao || !s3 || !s3->ready()) return;
+    const int batch =
+        cfg.media_multipart_cleanup_batch > 0
+            ? cfg.media_multipart_cleanup_batch
+            : 100;
+    std::string err;
+
+    std::vector<MultipartUploadSession> sessions;
+    if (!dao->ListExpiredMultipartSessions(batch, &sessions, &err)) {
+        LogWarn("ListExpiredMultipartSessions failed: " + err);
+        return;
+    }
+    for (const auto& session : sessions) {
+        MediaObject media;
+        if (!dao->GetById(session.media_id, &media, &err)) {
+            dao->DeleteMultipartSession(session.media_id, &err);
+            continue;
+        }
+        if (media.status != "init") {
+            // complete 已更新 media 但入队失败时，补一次任务。
+            if (media.status == "uploaded") {
+                dao->EnqueueTask(media.media_id, "process_video",
+                                 cfg.media_task_max_attempts, &err);
+            }
+            dao->DeleteMultipartSession(session.media_id, &err);
+            continue;
+        }
+
+        S3HeadResult head;
+        std::string head_err;
+        const bool head_ok = s3->HeadObject(media.object_key, &head, &head_err);
+        if (head_ok && head.size_bytes == media.size_bytes) {
+            std::string action_err;
+            if (dao->MarkUploaded(media.media_id, head.size_bytes, head.etag,
+                                  &action_err) &&
+                dao->EnqueueTask(media.media_id, "process_video",
+                                 cfg.media_task_max_attempts, &action_err)) {
+                dao->DeleteMultipartSession(media.media_id, &action_err);
+                LogInfo("recovered completed multipart upload: " +
+                        media.media_id);
+            } else {
+                LogWarn("recover multipart upload failed for " +
+                        media.media_id + ": " + action_err);
+            }
+            continue;
+        }
+        if (!head_ok &&
+            head_err.find("not found") == std::string::npos) {
+            // 网络/服务端错误：本轮不处理，下一轮再试，避免误 abort。
+            LogWarn("HEAD during multipart cleanup failed for " +
+                    media.media_id + ": " + head_err);
+            continue;
+        }
+
+        std::string abort_err;
+        if (!s3->AbortMultipartUpload(media.object_key, session.upload_id,
+                                      &abort_err)) {
+            LogWarn("AbortMultipartUpload failed for " + media.media_id + ": " +
+                    abort_err);
+            continue;
+        }
+        if (head_ok) {
+            std::string delete_err;
+            s3->DeleteObject(media.object_key, &delete_err);
+        }
+        dao->DeleteMultipartSession(media.media_id, &err);
+        dao->MarkDeleted(media.media_id, &err);
+        LogInfo("cleaned expired multipart upload: " + media.media_id);
+    }
+
+    const int64_t orphan_ttl =
+        cfg.media_upload_orphan_ttl_seconds > 0
+            ? cfg.media_upload_orphan_ttl_seconds
+            : 86400;
+    std::vector<MediaObject> stale;
+    if (!dao->ListStaleInitMedia(WorkerNowSeconds() - orphan_ttl, batch,
+                                 &stale, &err)) {
+        LogWarn("ListStaleInitMedia failed: " + err);
+        return;
+    }
+    for (const auto& media : stale) {
+        std::string delete_err;
+        s3->DeleteObject(media.object_key, &delete_err);
+        dao->MarkDeleted(media.media_id, &err);
+        LogInfo("cleaned stale init media: " + media.media_id);
+    }
+}
+
+}  // namespace
 
 int RunMediaWorker(const Config& cfg) {
     MySqlConnectionPool mysql_pool;
@@ -574,21 +676,34 @@ int RunMediaWorker(const Config& cfg) {
     LogInfo("image lane started, threads=" + std::to_string(image_threads));
     LogInfo("video lane started, threads=" + std::to_string(video_threads));
 
-    // 定期回收进程崩溃后遗留的 running 任务。
-    std::thread maintenance([&media_dao, stale_seconds]() {
-        auto last = std::chrono::steady_clock::now();
-        while (!ShutdownRequested().load(std::memory_order_relaxed)) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-            const auto now = std::chrono::steady_clock::now();
-            if (now - last < std::chrono::seconds(30)) continue;
-            last = now;
-            std::string recover_err;
-            if (!media_dao.RecoverStaleRunningTasks(stale_seconds,
-                                                     &recover_err)) {
-                LogWarn("RecoverStaleRunningTasks failed: " + recover_err);
+    // 定期回收进程崩溃后遗留的 running 任务，以及过期的 multipart 上传。
+    const int cleanup_interval =
+        std::max(5, cfg.media_multipart_cleanup_interval_seconds > 0
+                        ? cfg.media_multipart_cleanup_interval_seconds
+                        : 3600);
+    std::thread maintenance(
+        [&media_dao, &s3, &cfg, stale_seconds, cleanup_interval]() {
+            auto last_recover = std::chrono::steady_clock::now();
+            auto last_cleanup = std::chrono::steady_clock::now();
+            while (!ShutdownRequested().load(std::memory_order_relaxed)) {
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+                const auto now = std::chrono::steady_clock::now();
+                if (now - last_recover >= std::chrono::seconds(30)) {
+                    last_recover = now;
+                    std::string recover_err;
+                    if (!media_dao.RecoverStaleRunningTasks(stale_seconds,
+                                                             &recover_err)) {
+                        LogWarn("RecoverStaleRunningTasks failed: " +
+                                recover_err);
+                    }
+                }
+                if (now - last_cleanup >=
+                    std::chrono::seconds(cleanup_interval)) {
+                    last_cleanup = now;
+                    CleanupExpiredUploads(&media_dao, &s3, cfg);
+                }
             }
-        }
-    });
+        });
 
     for (auto& worker : image_workers) {
         if (worker.joinable()) worker.join();

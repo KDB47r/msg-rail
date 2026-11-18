@@ -49,4 +49,13 @@ struct MediaTask {
     int max_attempts{3};
 };
 
+// 一次 S3 multipart 上传的服务端状态。浏览器不持有 upload_id。
+struct MultipartUploadSession {
+    std::string media_id;
+    std::string upload_id;
+    int part_size{0};
+    int parts_total{0};
+    int64_t expires_at{0};  // Unix 秒
+};
+
 }  // namespace sparkpush
