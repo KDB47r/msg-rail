@@ -58,4 +58,33 @@ struct MultipartUploadSession {
     int64_t expires_at{0};  // Unix 秒
 };
 
+// 内容层：同一份字节 + 一套变体，只有一份。
+struct MediaAsset {
+    int64_t id{0};
+    std::string sha256;
+    int64_t size_bytes{0};
+    std::string kind;
+    std::string mime_type;
+    std::string storage_bucket;
+    std::string object_key;
+    std::string etag;
+    int width{0};
+    int height{0};
+    int64_t duration_ms{0};
+    std::string blur_hash;
+    std::string dominant_color;
+    int ref_count{0};
+};
+
+struct MediaAssetVariant {
+    int64_t asset_id{0};
+    std::string variant;
+    std::string format;
+    int width{0};
+    int height{0};
+    int64_t size_bytes{0};
+    int bitrate_kbps{0};
+    std::string object_key;
+};
+
 }  // namespace sparkpush

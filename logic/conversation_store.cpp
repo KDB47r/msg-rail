@@ -121,6 +121,17 @@ bool ConversationStore::GetHistory(const std::string& session_id,
                                       err_msg);
 }
 
+bool ConversationStore::GetMessageBySeq(const std::string& session_id,
+                                        int64_t msg_seq, Message* message,
+                                        std::string* err_msg) {
+    if (!message_dao_) {
+        if (err_msg) *err_msg = "message dao not initialized";
+        return false;
+    }
+    return message_dao_->GetMessageBySeq(session_id, msg_seq, message,
+                                         err_msg);
+}
+
 // 更新用户在该会话的已读序号。
 bool ConversationStore::MarkRead(int64_t user_id, const std::string& session_id,
                                  int64_t read_seq, std::string* err_msg) {

@@ -295,6 +295,7 @@ void HttpApiServer::onRequest(const HttpRequest& req, HttpResponse* resp) {
         {"/api/login", &HttpApiServer::handleLogin}, // 登录 read
         {"/api/register", &HttpApiServer::handleRegister}, // 注册 read
         {"/api/message/send", &HttpApiServer::handleSendMessage}, // http 消息 压测使用 curl调试 服务端/机器人发消息(无浏览器/不适合维护ws http更自然)
+        {"/api/message/forward", &HttpApiServer::handleForwardMessage},
         {"/api/session/history", &HttpApiServer::handleHistory}, // 拉取历史 read
         {"/api/session/mark_read", &HttpApiServer::handleMarkRead}, // 更新已读游标 read
         {"/api/session/list_single", &HttpApiServer::handleSingleSessionList}, // 刷新单聊会话列表 read

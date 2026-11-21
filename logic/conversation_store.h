@@ -38,6 +38,10 @@ class ConversationStore {
                     int limit, std::vector<Message>* messages,
                     std::string* err_msg);
 
+    // 读取单条消息，供消息转发定位源消息。
+    bool GetMessageBySeq(const std::string& session_id, int64_t msg_seq,
+                         Message* message, std::string* err_msg);
+
     bool MarkRead(int64_t user_id, const std::string& session_id,
                   int64_t read_seq, std::string* err_msg);
 

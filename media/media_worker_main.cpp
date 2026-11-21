@@ -1,5 +1,7 @@
 #include <unistd.h>
 
+#include <openssl/evp.h>
+
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -137,6 +139,116 @@ bool FailTask(sparkpush::MediaDao* dao, const sparkpush::MediaTask& task,
     return true;
 }
 
+std::string Sha256Bytes(const std::string& data) {
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int digest_len = 0;
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (!ctx) return {};
+    if (EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) != 1 ||
+        EVP_DigestUpdate(ctx, data.data(), data.size()) != 1 ||
+        EVP_DigestFinal_ex(ctx, digest, &digest_len) != 1) {
+        EVP_MD_CTX_free(ctx);
+        return {};
+    }
+    EVP_MD_CTX_free(ctx);
+    static const char kHex[] = "0123456789abcdef";
+    std::string out;
+    out.reserve(digest_len * 2);
+    for (unsigned int i = 0; i < digest_len; ++i) {
+        out.push_back(kHex[digest[i] >> 4]);
+        out.push_back(kHex[digest[i] & 0x0F]);
+    }
+    return out;
+}
+
+bool Sha256File(const std::string& path, std::string* out, std::string* err) {
+    if (!out) {
+        if (err) *err = "invalid hash output";
+        return false;
+    }
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        if (err) *err = "open hash input failed";
+        return false;
+    }
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (!ctx) {
+        if (err) *err = "EVP_MD_CTX_new failed";
+        return false;
+    }
+    bool ok = EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) == 1;
+    std::vector<char> buffer(1024 * 1024);
+    while (ok && in.good()) {
+        in.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+        const std::streamsize n = in.gcount();
+        if (n > 0) {
+            ok = EVP_DigestUpdate(ctx, buffer.data(),
+                                  static_cast<size_t>(n)) == 1;
+        }
+    }
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int digest_len = 0;
+    if (ok) ok = EVP_DigestFinal_ex(ctx, digest, &digest_len) == 1;
+    EVP_MD_CTX_free(ctx);
+    if (!ok) {
+        if (err) *err = "sha256 file failed";
+        return false;
+    }
+    static const char kHex[] = "0123456789abcdef";
+    out->clear();
+    out->reserve(digest_len * 2);
+    for (unsigned int i = 0; i < digest_len; ++i) {
+        out->push_back(kHex[digest[i] >> 4]);
+        out->push_back(kHex[digest[i] & 0x0F]);
+    }
+    return true;
+}
+
+// 命中 ready asset 时直接把当前 media 链接到已有内容，跳过解码/转码。
+bool TryDedupToExistingAsset(sparkpush::MediaDao* dao,
+                             sparkpush::S3Client* s3,
+                             const sparkpush::MediaObject& media,
+                             const std::string& sha256,
+                             const std::string& task_type, bool* hit,
+                             std::string* err) {
+    if (hit) *hit = false;
+    sparkpush::MediaAsset asset;
+    bool found = false;
+    if (!dao->GetReadyAssetByHash(sha256, media.kind, &asset, &found, err)) {
+        return false;
+    }
+    if (!found) return true;
+    if (!dao->LinkMediaToAsset(media.media_id, asset, task_type, err)) {
+        return false;
+    }
+    std::string delete_err;
+    s3->DeleteObject(media.object_key, &delete_err);
+    if (!delete_err.empty()) {
+        sparkpush::LogWarn("delete dedup duplicate object failed: " +
+                           delete_err);
+    }
+    sparkpush::LogInfo("media dedup hit: " + media.media_id +
+                       " asset_id=" + std::to_string(asset.id) +
+                       " sha256=" + sha256);
+    if (hit) *hit = true;
+    return true;
+}
+
+void RegisterProcessedAsset(sparkpush::MediaDao* dao,
+                            const sparkpush::MediaObject& media,
+                            const std::string& sha256,
+                            const sparkpush::MediaAsset& asset,
+                            const std::vector<sparkpush::MediaVariant>& variants,
+                            const std::string& task_type) {
+    std::string err;
+    if (!dao->CreateAssetAndLink(media.media_id, asset, variants, task_type,
+                                 &err)) {
+        // 并发相同内容可能撞唯一键；媒体本身已经 ready，不因此让任务失败。
+        sparkpush::LogWarn("register media asset failed for " +
+                           media.media_id + ": " + err);
+    }
+}
+
 bool ProcessVideoTask(sparkpush::MediaDao* dao, sparkpush::S3Client* s3,  //  video worker 异步处理
                       const sparkpush::Config& cfg,
                       const sparkpush::MediaTask& task,
@@ -168,6 +280,19 @@ bool ProcessVideoTask(sparkpush::MediaDao* dao, sparkpush::S3Client* s3,  //  vi
         FailTask(dao, task, "video object is empty", true);
         return false;
     }
+
+    std::string sha256;
+    if (!Sha256File(input_path, &sha256, &err)) {
+        FailTask(dao, task, "hash video failed: " + err);
+        return false;
+    }
+    bool dedup_hit = false;
+    if (!TryDedupToExistingAsset(dao, s3, media, sha256,
+                                 "process_video", &dedup_hit, &err)) {
+        FailTask(dao, task, "dedup video failed: " + err);
+        return false;
+    }
+    if (dedup_hit) return true;
 
     sparkpush::VideoProbeInfo info;
     bool permanent = false;
@@ -327,6 +452,21 @@ bool ProcessVideoTask(sparkpush::MediaDao* dao, sparkpush::S3Client* s3,  //  vi
         FailTask(dao, task, "complete video failed: " + err);
         return false;
     }
+    sparkpush::MediaAsset asset;
+    asset.sha256 = sha256;
+    asset.size_bytes = playback_size;
+    asset.kind = media.kind;
+    asset.mime_type = media.mime_type;
+    asset.storage_bucket = media.storage_bucket;
+    asset.object_key = playback_key;
+    asset.etag = playback_etag;
+    asset.width = display_info.width;
+    asset.height = display_info.height;
+    asset.duration_ms = display_info.duration_ms;
+    asset.blur_hash = media.blur_hash;
+    asset.dominant_color = media.dominant_color;
+    RegisterProcessedAsset(dao, media, sha256, asset, variants,
+                           "process_video");
     sparkpush::LogInfo(
         "video processed: " + media.media_id + " " +
         std::to_string(display_info.width) + "x" +
@@ -405,6 +545,19 @@ bool ProcessOneTask(sparkpush::MediaDao* dao, sparkpush::S3Client* s3,
         return false;
     }
 
+    const std::string sha256 = Sha256Bytes(object.body);
+    if (sha256.empty()) {
+        FailTask(dao, task, "hash image failed");
+        return false;
+    }
+    bool dedup_hit = false;
+    if (!TryDedupToExistingAsset(dao, s3, media, sha256,
+                                 "process_image", &dedup_hit, &err)) {
+        FailTask(dao, task, "dedup image failed: " + err);
+        return false;
+    }
+    if (dedup_hit) return true;
+
     sparkpush::ImageLimits limits;
     limits.max_pixels = cfg.media_max_pixels;
     limits.max_side = cfg.media_max_side;
@@ -445,6 +598,21 @@ bool ProcessOneTask(sparkpush::MediaDao* dao, sparkpush::S3Client* s3,
         FailTask(dao, task, "complete image failed: " + err);
         return false;
     }
+    sparkpush::MediaAsset asset;
+    asset.sha256 = sha256;
+    asset.size_bytes = static_cast<int64_t>(object.body.size());
+    asset.kind = media.kind;
+    asset.mime_type = media.mime_type;
+    asset.storage_bucket = media.storage_bucket;
+    asset.object_key = media.object_key;
+    asset.etag = media.etag;
+    asset.width = processed.width;
+    asset.height = processed.height;
+    asset.duration_ms = 0;
+    asset.blur_hash = media.blur_hash;
+    asset.dominant_color = processed.dominant_color;
+    RegisterProcessedAsset(dao, media, sha256, asset, variants,
+                           "process_image");
     sparkpush::LogInfo("media processed: " + media.media_id + " " +
                        std::to_string(processed.width) + "x" +
                        std::to_string(processed.height) + " variants=" +

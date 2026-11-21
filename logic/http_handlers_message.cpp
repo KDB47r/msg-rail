@@ -543,6 +543,179 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
     WriteJson(resp, 0, "ok", data.dump());
 }
 
+// POST /api/message/forward
+// 单聊消息转发：校验源会话权限，复制源消息内容；媒体消息复用对象和变体，
+// 不重新上传/解码，只创建新的 media_object 和 media_variant。
+void HttpApiServer::handleForwardMessage(const HttpRequest& req,
+                                         HttpResponse* resp) {
+    if (!RequirePost(req, resp)) return;
+    const int64_t user_id = AuthenticateRequest(req, resp);
+    if (user_id <= 0) return;
+    if (!store_ || !media_dao_) {
+        WriteError(resp, 500, "conversation store or media dao not initialized");
+        return;
+    }
+
+    nlohmann::json j;
+    if (!ParseJsonBody(req.body(), &j)) {
+        WriteError(resp, 400,
+                   "invalid json body, expect "
+                   "{\"source_session_id\":\"...\",\"source_msg_seq\":1,"
+                   "\"to_user_id\":2}");
+        return;
+    }
+
+    std::string source_session_id;
+    int64_t source_msg_seq = 0;
+    int64_t to_user = 0;
+    try {
+        if (!j.contains("source_session_id") ||
+            !j["source_session_id"].is_string() ||
+            !j.contains("source_msg_seq") ||
+            !j["source_msg_seq"].is_number_integer() ||
+            !j.contains("to_user_id") ||
+            !j["to_user_id"].is_number_integer()) {
+            WriteError(resp, 400,
+                       "source_session_id/source_msg_seq/to_user_id required");
+            return;
+        }
+        source_session_id = j["source_session_id"].get<std::string>();
+        source_msg_seq = j["source_msg_seq"].get<int64_t>();
+        to_user = j["to_user_id"].get<int64_t>();
+    } catch (const nlohmann::json::exception&) {
+        WriteError(resp, 400, "invalid json fields in message forward");
+        return;
+    }
+
+    if (source_session_id.rfind("single:", 0) != 0) {
+        WriteError(resp, 400, "only single chat messages can be forwarded");
+        return;
+    }
+    if (source_msg_seq <= 0 || to_user <= 0) {
+        WriteError(resp, 400, "source_msg_seq/to_user_id must be positive");
+        return;
+    }
+    if (!CheckSessionAccess(user_id, source_session_id, resp)) return;
+
+    Message source;
+    std::string err;
+    if (!store_->GetMessageBySeq(source_session_id, source_msg_seq, &source,
+                                 &err)) {
+        WriteError(resp, 404, "source message not found");
+        return;
+    }
+    if (source.msg_type != "text" && source.msg_type != "image" &&
+        source.msg_type != "video" && source.msg_type != "file") {
+        WriteError(resp, 400, "unsupported source message type");
+        return;
+    }
+
+    nlohmann::json source_root;
+    try {
+        source_root = nlohmann::json::parse(source.content_json);
+    } catch (const nlohmann::json::exception&) {
+        WriteError(resp, 500, "source message content is invalid");
+        return;
+    }
+    const nlohmann::json* source_content = nullptr;
+    auto content_it = source_root.find("content");
+    if (content_it != source_root.end()) source_content = &(*content_it);
+    if (source_content && source_content->is_object() &&
+        source_content->contains("content") &&
+        (*source_content)["content"].is_object()) {
+        source_content = &(*source_content)["content"];
+    }
+
+    std::string caption;
+    std::string new_media_id;
+    bool clone_created = false;
+
+    if (source.msg_type == "text") {
+        if (!source_content || !source_content->is_string()) {
+            WriteError(resp, 400, "source text content is invalid");
+            return;
+        }
+    } else {
+        const std::string source_media_id =
+            ExtractMediaIdFromContent(source.content_json);
+        if (source_media_id.empty()) {
+            WriteError(resp, 400, "source message has no media");
+            return;
+        }
+        MediaObject media;
+        if (!media_dao_->GetById(source_media_id, &media, &err)) {
+            WriteError(resp, 404, "source media not found");
+            return;
+        }
+        if (media.session_id != source_session_id ||
+            media.message_id != source.msg_id) {
+            WriteError(resp, 409, "source media does not belong to message");
+            return;
+        }
+        if (media.kind != source.msg_type) {
+            WriteError(resp, 400, "source media kind mismatch");
+            return;
+        }
+        if (media.status != "ready") {
+            WriteError(resp, 409, "source media is not ready");
+            return;
+        }
+        std::vector<MediaVariant> variants;
+        if (!media_dao_->ListVariants(media.media_id, &variants, &err)) {
+            LogError("ListVariants failed for forward " + media.media_id +
+                     ": " + err);
+            WriteError(resp, 500, "load source media variants failed");
+            return;
+        }
+        if (source_content && source_content->is_object() &&
+            source_content->contains("caption") &&
+            (*source_content)["caption"].is_string()) {
+            caption = (*source_content)["caption"].get<std::string>();
+        }
+
+        int64_t asset_id = 0;
+        bool has_asset = false;
+        if (!media_dao_->GetAssetIdForMedia(media.media_id, &asset_id,
+                                            &has_asset, &err)) {
+            LogError("GetAssetIdForMedia failed for " + media.media_id + ": " +
+                     err);
+            WriteError(resp, 500, "load source media asset failed");
+            return;
+        }
+        new_media_id = GenerateMediaId();
+        if (!media_dao_->CreateClone(media, new_media_id, user_id, variants,
+                                     has_asset ? asset_id : 0, &err)) {
+            LogError("CreateClone failed for " + media.media_id + ": " + err);
+            WriteError(resp, 500, "clone source media failed");
+            return;
+        }
+        clone_created = true;
+    }
+
+    // 构造一个等价于普通 /api/message/send 的请求，复用发送核心：
+    // 好友校验、分配 seq、绑定媒体、Kafka 投递、失败回滚都在原逻辑里。
+    nlohmann::json send_j;
+    send_j["to_user_id"] = to_user;
+    send_j["msg_type"] = source.msg_type;
+    if (source.msg_type == "text") {
+        send_j["content"] = *source_content;
+    } else {
+        send_j["media_id"] = new_media_id;
+        if (!caption.empty()) send_j["caption"] = caption;
+    }
+    HttpRequest send_req = req;
+    send_req.set_body(send_j.dump());
+    handleSendMessage(send_req, resp);
+
+    if (clone_created && resp->status_code() != 200) {
+        std::string delete_err;
+        if (!media_dao_->DeleteClone(new_media_id, user_id, &delete_err)) {
+            LogWarn("DeleteClone after forward failure failed for " +
+                    new_media_id + ": " + delete_err);
+        }
+    }
+}
+
 // read
 // 查询会话历史消息。
 void HttpApiServer::handleHistory(const HttpRequest& req, HttpResponse* resp) {

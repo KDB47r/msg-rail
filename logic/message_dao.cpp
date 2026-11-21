@@ -298,4 +298,117 @@ bool MessageDao::ListMessages(const std::string& session_id, int64_t anchor_seq,
     return true;
 }
 
+bool MessageDao::GetMessageBySeq(const std::string& session_id,
+                                 int64_t msg_seq, Message* message,
+                                 std::string* err_msg) {
+    if (!pool_ || !message) {
+        if (err_msg) *err_msg = "invalid arguments";
+        return false;
+    }
+    auto guard = pool_->Acquire();
+    MYSQL* conn = guard.get();
+    if (!conn) {
+        if (err_msg) *err_msg = "no mysql connection";
+        return false;
+    }
+
+    static const char* kSql =
+        "SELECT session_id, msg_seq, sender_id, msg_type, content_json, "
+        "timestamp_ms, client_msg_id FROM message "
+        "WHERE session_id=? AND msg_seq=? LIMIT 1";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn);
+    if (!stmt) {
+        if (err_msg) *err_msg = "mysql_stmt_init failed";
+        return false;
+    }
+    if (mysql_stmt_prepare(stmt, kSql, std::strlen(kSql)) != 0) {
+        if (err_msg) *err_msg = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
+
+    unsigned long session_len = static_cast<unsigned long>(session_id.size());
+    long long seq_buf = msg_seq;
+    MYSQL_BIND bind[2];
+    std::memset(bind, 0, sizeof(bind));
+    bind[0].buffer_type = MYSQL_TYPE_STRING;
+    bind[0].buffer = const_cast<char*>(session_id.data());
+    bind[0].buffer_length = session_len;
+    bind[0].length = &session_len;
+    bind[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    bind[1].buffer = &seq_buf;
+
+    if (mysql_stmt_bind_param(stmt, bind) != 0 ||
+        mysql_stmt_execute(stmt) != 0) {
+        if (err_msg) *err_msg = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
+
+    char session_buf[256];
+    char type_buf[64];
+    char client_msg_id_buf[128];
+    std::vector<char> content_buf(65536);
+    unsigned long session_buf_len = 0;
+    unsigned long type_len = 0;
+    unsigned long content_len = 0;
+    unsigned long client_msg_id_len = 0;
+    long long sender_buf = 0;
+    long long ts_buf = 0;
+
+    MYSQL_BIND result[7];
+    std::memset(result, 0, sizeof(result));
+    result[0].buffer_type = MYSQL_TYPE_STRING;
+    result[0].buffer = session_buf;
+    result[0].buffer_length = sizeof(session_buf);
+    result[0].length = &session_buf_len;
+    result[1].buffer_type = MYSQL_TYPE_LONGLONG;
+    result[1].buffer = &seq_buf;
+    result[2].buffer_type = MYSQL_TYPE_LONGLONG;
+    result[2].buffer = &sender_buf;
+    result[3].buffer_type = MYSQL_TYPE_STRING;
+    result[3].buffer = type_buf;
+    result[3].buffer_length = sizeof(type_buf);
+    result[3].length = &type_len;
+    result[4].buffer_type = MYSQL_TYPE_STRING;
+    result[4].buffer = content_buf.data();
+    result[4].buffer_length = content_buf.size();
+    result[4].length = &content_len;
+    result[5].buffer_type = MYSQL_TYPE_LONGLONG;
+    result[5].buffer = &ts_buf;
+    result[6].buffer_type = MYSQL_TYPE_STRING;
+    result[6].buffer = client_msg_id_buf;
+    result[6].buffer_length = sizeof(client_msg_id_buf);
+    result[6].length = &client_msg_id_len;
+
+    if (mysql_stmt_bind_result(stmt, result) != 0) {
+        if (err_msg) *err_msg = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
+    const int fetch_ret = mysql_stmt_fetch(stmt);
+    if (fetch_ret == MYSQL_NO_DATA) {
+        if (err_msg) *err_msg = "message not found";
+        mysql_stmt_close(stmt);
+        return false;
+    }
+    if (fetch_ret != 0 && fetch_ret != MYSQL_DATA_TRUNCATED) {
+        if (err_msg) *err_msg = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
+
+    message->session_id.assign(session_buf, session_buf_len);
+    message->msg_seq = seq_buf;
+    message->sender_id = sender_buf;
+    message->msg_type.assign(type_buf, type_len);
+    message->content_json.assign(
+        content_buf.data(), std::min<size_t>(content_len, content_buf.size()));
+    message->timestamp_ms = ts_buf;
+    message->client_msg_id.assign(client_msg_id_buf, client_msg_id_len);
+    message->msg_id = message->session_id + "-" + std::to_string(msg_seq);
+    mysql_stmt_close(stmt);
+    return true;
+}
+
 }  // namespace sparkpush

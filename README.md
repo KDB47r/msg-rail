@@ -8,9 +8,11 @@ MsgRail（讯驿）是一个类 IM 的消息推送系统，重点不在聊天界
 ## 功能
 
 - **单聊**：用户之间的实时消息收发
+- **消息转发**：右键/长按消息，转发文本、图片、视频、文件到其他单聊；媒体复用对象和变体，不重新上传/解码
 - **图片消息**：MinIO/S3 浏览器直传、异步生成缩略图、聊天气泡清晰预览、点击查看大图
 - **文件消息**：≤ 50 MiB 任意文件直传，卡片展示，签名 URL + `Content-Disposition` 强制下载
 - **视频消息**：≤ 100 MiB MP4/WebM 分片直传（支持断点续传），worker 用 ffprobe 校验、ffmpeg 抽 JPEG 封面；MP4 + HEVC 自动转码为 H.264/AAC，聊天卡片 + 弹窗播放
+- **媒体去重**：图片/视频服务端 SHA-256 内容寻址；跨用户重复上传复用同一 asset 和变体，跳过解码/转码
 - **聊天室**：房间加入/离开、房间广播、在线人数
 - **弹幕**：按视频时间轴发送和拉取
 - **广播**：全站广播、房间广播
@@ -116,6 +118,9 @@ mysql -uroot -p123456 spark_push < sql/migrations/001_media_tables.sql
 
 # 视频 multipart 上传会话表（2026-11-18）
 mysql -uroot -p123456 spark_push < sql/migrations/004_media_multipart_upload.sql
+
+# 媒体内容寻址 asset 表（2026-11-20）
+mysql -uroot -p123456 spark_push < sql/migrations/005_media_asset.sql
 ```
 
 ### 3. 编译
@@ -175,7 +180,7 @@ http://127.0.0.1:9001/index.html
 | 分类 | 接口 |
 |---|---|
 | 认证 | `POST /api/login`、`POST /api/register` |
-| 消息 | `POST /api/message/send`、`GET /api/session/history`、`GET /api/session/unread`、`POST /api/session/mark_read`、`GET /api/session/list_single` |
+| 消息 | `POST /api/message/send`、`POST /api/message/forward`、`GET /api/session/history`、`GET /api/session/unread`、`POST /api/session/mark_read`、`GET /api/session/list_single` |
 | 媒体 | `POST /api/media/upload/init`、`POST /api/media/upload/complete`、`GET /api/media/{media_id}` |
 | 视频分片 | `POST /api/media/upload/multipart/part_urls`、`POST /api/media/upload/multipart/status`、`POST /api/media/upload/abort` |
 | 聊天室 | `/api/chatroom/join`、`/leave`、`/unsubscribe`、`/online_count`、`/list` |
@@ -530,6 +535,92 @@ python3 tests/media_message_regression_e2e.py   # 旧单次 PUT 回归
 | 过期清理 | `media/media_worker_main.cpp` |
 | 设计文档 | [`docs/video_multipart_resumable_design.md`](docs/video_multipart_resumable_design.md) |
 
+## 媒体去重（图片/视频）
+
+同一份图片/视频被重复上传时，通过内容寻址复用已有 asset：
+
+```text
+worker 下载原文件
+→ 服务端计算 SHA-256
+→ 查 media_asset(sha256, kind) ready
+   ├─ 命中：链接已有 asset，复制变体，跳过解码/转码
+   └─ 未命中：正常处理，创建 asset + asset_variant
+```
+
+数据模型：
+
+```text
+media_asset           同一份字节 + 一套变体
+media_asset_variant   canonical 变体
+media_object          每次上传/转发独立的 media
+media_object_asset    media_id -> asset_id 映射
+```
+
+特点：
+
+- 跨用户去重：不同用户上传相同字节，底层 asset 只有一份；
+- 转发 clone 继承 asset 映射，不重复解码；
+- 每条消息仍有独立 `media_id`，权限和历史行为不变；
+- 重复上传仍会先传字节（首期不做客户端 hash 秒传）；
+- 当前覆盖图片和视频，文件不参与；
+- asset 预留 `ref_count`，暂不做 GC/历史 backfill。
+
+测试：
+
+```bash
+python3 tests/media_dedup_e2e.py
+```
+
+## 消息转发
+
+单聊消息支持右键/长按转发：
+
+- 桌面端：右键消息 → “转发”；
+- 移动端：长按消息 → “转发”；
+- 弹窗里选择已有单聊，或直接输入目标 UserID；
+- 原样保留源消息内容和 caption，不附加新说明；
+- 支持文本、图片、视频、文件。
+
+接口：
+
+```http
+POST /api/message/forward
+{
+  "source_session_id": "single:19:20",
+  "source_msg_seq": 33,
+  "to_user_id": 25
+}
+```
+
+媒体消息采用 **media clone**：
+
+```text
+新 media_id
++ 复制源 media 的 object_key / mime / 宽高 / 时长 / sha256
++ 复制 media_variant
++ status=ready，owner=转发者
+```
+
+特点：
+
+- 不重新上传字节；
+- 不重新解码/转码；
+- 不产生 media_task；
+- 与原 media 共用 S3 对象和变体；
+- 当前没有媒体删除 API，所以暂时不存在共享对象被误删的问题；后续做删除/去重时需要 asset/ref_count。
+
+当前不做：
+
+- 聊天室转发；
+- 转发附加说明；
+- 媒体 asset 去重（重复上传仍会传字节，只是后续可继续做去重）。
+
+测试：
+
+```bash
+python3 tests/message_forward_e2e.py
+```
+
 ## 测试
 
 ```bash
@@ -563,6 +654,12 @@ python3 tests/video_multipart_e2e.py
 
 # 视频单次 PUT vs multipart vs 续传耗时
 python3 tests/video_multipart_bench.py
+
+# 单聊消息转发（文本/图片/视频/文件、权限）
+python3 tests/message_forward_e2e.py
+
+# 图片/视频跨用户内容去重
+python3 tests/media_dedup_e2e.py
 ```
 
 压测和命令行客户端见 [`load_test/README.md`](load_test/README.md)。
@@ -591,6 +688,8 @@ python3 tests/video_multipart_bench.py
 - [`docs/benchmark.md`](docs/benchmark.md)：图片处理管线 benchmark 命令、真实图片结果与优化前后对比
 - [`docs/media_redis_cache_cdn_design.md`](docs/media_redis_cache_cdn_design.md)：媒体元数据 Redis 缓存与变体 CDN 方案、验证结果
 - [`docs/video_multipart_resumable_design.md`](docs/video_multipart_resumable_design.md)：视频 multipart 分片上传、断点续传、过期上传清理方案与验证
+- [`docs/message_forward_design.md`](docs/message_forward_design.md)：单聊消息转发、右键/长按菜单、media clone 方案
+- [`docs/media_dedup_forward_design.md`](docs/media_dedup_forward_design.md)：图片/视频内容寻址去重、asset 层、转发共享 asset 方案
 - [`docs/media_upload_design.md`](docs/media_upload_design.md)：图片/视频/语音上传与模糊预览设计草案
 - [`docs/media_api_spec.md`](docs/media_api_spec.md)：历史接口契约草案；图片/文件以实现文档为准，视频见视频实现文档
 - [`docs/user_profile_friend_unread_design.md`](docs/user_profile_friend_unread_design.md)：用户资料、好友关系、昵称/头像与未读消息技术方案（含数据模型、接口契约与状态机）

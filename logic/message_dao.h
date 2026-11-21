@@ -22,6 +22,10 @@ class MessageDao {
                       int limit, std::vector<Message>* messages,
                       std::string* err_msg);
 
+    // 按会话 + 序号读取单条消息；转发时用来定位源消息。
+    bool GetMessageBySeq(const std::string& session_id, int64_t msg_seq,
+                         Message* message, std::string* err_msg);
+
    private:
     MySqlConnectionPool* pool_{nullptr};
 };

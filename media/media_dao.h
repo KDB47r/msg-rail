@@ -17,6 +17,35 @@ class MediaDao {
 
     bool Create(const MediaObject& media, std::string* err);
 
+    // 转发用：复制一份 ready 的 media_object + variants，共用原 object_key。
+    // 不复制 S3 字节，不创建 media_task。
+    bool CreateClone(const MediaObject& source, const std::string& new_media_id,
+                     int64_t owner_id,
+                     const std::vector<MediaVariant>& variants,
+                     int64_t asset_id, std::string* err);
+    // 转发失败时删除尚未绑定的 clone 元数据（不删除共享对象）。
+    bool DeleteClone(const std::string& media_id, int64_t owner_id,
+                     std::string* err);
+
+    // ---- 内容寻址的媒体资产 ----
+    bool GetReadyAssetByHash(const std::string& sha256,
+                             const std::string& kind, MediaAsset* asset,
+                             bool* found, std::string* err);
+    bool GetAssetIdForMedia(const std::string& media_id, int64_t* asset_id,
+                            bool* found, std::string* err);
+
+    // 去重命中：把已有 asset 的变体复制到当前 media，更新媒体字段/任务状态，
+    // mapping 写入并 ref_count +1。
+    bool LinkMediaToAsset(const std::string& media_id, const MediaAsset& asset,
+                          const std::string& task_type, std::string* err);
+
+    // 首次处理完成：创建 asset + asset_variant，关联当前 media，ref_count=1。
+    // 如果唯一键冲突（并发相同内容），返回 false，调用方回退到 Get+Link。
+    bool CreateAssetAndLink(const std::string& media_id,
+                            const MediaAsset& asset,
+                            const std::vector<MediaVariant>& variants,
+                            const std::string& task_type, std::string* err);
+
     bool GetById(const std::string& media_id, MediaObject* media,
                  std::string* err);
 

@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.14)
 # 图片编解码依赖。Ubuntu 安装命令：
 #   sudo apt install libjpeg-turbo8-dev libpng-dev libwebp-dev pkg-config
 find_package(PkgConfig REQUIRED)
+find_package(OpenSSL REQUIRED)
 pkg_check_modules(SPARKPUSH_JPEG REQUIRED IMPORTED_TARGET GLOBAL libjpeg)
 pkg_check_modules(SPARKPUSH_PNG REQUIRED IMPORTED_TARGET GLOBAL libpng16)
 pkg_check_modules(SPARKPUSH_WEBP REQUIRED IMPORTED_TARGET GLOBAL libwebp)
@@ -35,5 +36,6 @@ target_link_libraries(media_worker
     spark_push_s3
     spark_push_core
     spark_push_mysql
+    OpenSSL::Crypto
     Threads::Threads
 )

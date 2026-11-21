@@ -48,6 +48,7 @@ class HttpApiServer {
     void handleRegister(const HttpRequest& req, HttpResponse* resp);
 
     void handleSendMessage(const HttpRequest& req, HttpResponse* resp);
+    void handleForwardMessage(const HttpRequest& req, HttpResponse* resp);
     void handleHistory(const HttpRequest& req, HttpResponse* resp);
     void handleMarkRead(const HttpRequest& req, HttpResponse* resp);
     void handleUnread(const HttpRequest& req, HttpResponse* resp);

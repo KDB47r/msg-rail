@@ -118,6 +118,50 @@ bool MarkTaskDone(MYSQL* conn, const std::string& media_id,
     return ExecuteUpdate(conn, kSql, bind, nullptr, err);
 }
 
+bool UpdateMediaFromAsset(MYSQL* conn, const std::string& media_id,
+                          const MediaAsset& asset, std::string* err) {
+    static const char* kSql =
+        "UPDATE media_object SET status='ready', object_key=?, etag=?, "
+        "storage_bucket=?, mime_type=?, size_bytes=?, sha256=?, width=?, "
+        "height=?, duration_ms=?, blur_hash=?, dominant_color=?, "
+        "error_message='' WHERE media_id=?";
+    unsigned long key_len = 0, etag_len = 0, bucket_len = 0, mime_len = 0,
+                  sha_len = 0, blur_len = 0, color_len = 0, media_len = 0;
+    MYSQL_BIND bind[12];
+    std::memset(bind, 0, sizeof(bind));
+    BindString(&bind[0], asset.object_key, &key_len);
+    BindString(&bind[1], asset.etag, &etag_len);
+    BindString(&bind[2], asset.storage_bucket, &bucket_len);
+    BindString(&bind[3], asset.mime_type, &mime_len);
+    long long size = asset.size_bytes;
+    BindInt64(&bind[4], &size);
+    BindString(&bind[5], asset.sha256, &sha_len);
+    long long width = asset.width;
+    long long height = asset.height;
+    long long duration = asset.duration_ms;
+    BindInt64(&bind[6], &width);
+    BindInt64(&bind[7], &height);
+    BindInt64(&bind[8], &duration);
+    BindString(&bind[9], asset.blur_hash, &blur_len);
+    BindString(&bind[10], asset.dominant_color, &color_len);
+    BindString(&bind[11], media_id, &media_len);
+    return ExecuteUpdate(conn, kSql, bind, nullptr, err);
+}
+
+bool InsertAssetMapping(MYSQL* conn, const std::string& media_id,
+                        int64_t asset_id, std::string* err) {
+    static const char* kSql =
+        "INSERT INTO media_object_asset(media_id, asset_id) VALUES(?, ?) "
+        "ON DUPLICATE KEY UPDATE asset_id=VALUES(asset_id)";
+    unsigned long media_len = 0;
+    long long aid = asset_id;
+    MYSQL_BIND bind[2];
+    std::memset(bind, 0, sizeof(bind));
+    BindString(&bind[0], media_id, &media_len);
+    BindInt64(&bind[1], &aid);
+    return ExecuteUpdate(conn, kSql, bind, nullptr, err);
+}
+
 }  // namespace
 
 bool MediaDao::Create(const MediaObject& media, std::string* err) {
@@ -152,6 +196,502 @@ bool MediaDao::Create(const MediaObject& media, std::string* err) {
     BindString(&bind[8], media.storage_bucket, &bucket_len);
     BindString(&bind[9], media.object_key, &key_len);
     return ExecuteUpdate(conn, kSql, bind, nullptr, err);
+}
+
+bool MediaDao::CreateClone(const MediaObject& source,
+                           const std::string& new_media_id, int64_t owner_id,
+                           const std::vector<MediaVariant>& variants,
+                           int64_t asset_id, std::string* err) {
+    if (!pool_) {
+        if (err) *err = "mysql pool not initialized";
+        return false;
+    }
+    auto guard = pool_->Acquire();
+    MYSQL* conn = guard.get();
+    if (!conn) {
+        if (err) *err = "no mysql connection";
+        return false;
+    }
+    if (!Begin(conn, err)) return false;
+
+    static const char* kSql =
+        "INSERT INTO media_object(media_id, owner_id, kind, status, "
+        "original_name, mime_type, size_bytes, sha256, width, height, "
+        "duration_ms, blur_hash, dominant_color, storage_bucket, object_key, "
+        "etag, session_id, message_id, error_message) "
+        "VALUES(?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+        "'', '', '')";
+    unsigned long media_len = 0, kind_len = 0, name_len = 0, mime_len = 0,
+                  sha_len = 0, blur_len = 0, color_len = 0, bucket_len = 0,
+                  key_len = 0, etag_len = 0;
+    long long owner = owner_id;
+    long long size = source.size_bytes;
+    long long duration = source.duration_ms;
+    long long width = source.width;
+    long long height = source.height;
+    MYSQL_BIND bind[16];
+    std::memset(bind, 0, sizeof(bind));
+    BindString(&bind[0], new_media_id, &media_len);
+    BindInt64(&bind[1], &owner);
+    BindString(&bind[2], source.kind, &kind_len);
+    BindString(&bind[3], source.original_name, &name_len);
+    BindString(&bind[4], source.mime_type, &mime_len);
+    BindInt64(&bind[5], &size);
+    BindString(&bind[6], source.sha256, &sha_len);
+    BindInt64(&bind[7], &width);
+    BindInt64(&bind[8], &height);
+    BindInt64(&bind[9], &duration);
+    BindString(&bind[10], source.blur_hash, &blur_len);
+    BindString(&bind[11], source.dominant_color, &color_len);
+    BindString(&bind[12], source.storage_bucket, &bucket_len);
+    BindString(&bind[13], source.object_key, &key_len);
+    BindString(&bind[14], source.etag, &etag_len);
+
+    if (!ExecuteUpdate(conn, kSql, bind, nullptr, err)) {
+        Finish(conn, false);
+        return false;
+    }
+    if (!UpsertVariants(conn, new_media_id, variants, err)) {
+        Finish(conn, false);
+        return false;
+    }
+    if (asset_id > 0) {
+        if (!InsertAssetMapping(conn, new_media_id, asset_id, err)) {
+            Finish(conn, false);
+            return false;
+        }
+        std::string ref_sql =
+            "UPDATE media_asset SET ref_count=ref_count+1 WHERE id=" +
+            std::to_string(asset_id);
+        if (mysql_query(conn, ref_sql.c_str()) != 0) {
+            if (err) *err = mysql_error(conn);
+            Finish(conn, false);
+            return false;
+        }
+    }
+    Finish(conn, true);
+    return true;
+}
+
+bool MediaDao::DeleteClone(const std::string& media_id, int64_t owner_id,
+                           std::string* err) {
+    if (!pool_) {
+        if (err) *err = "mysql pool not initialized";
+        return false;
+    }
+    auto guard = pool_->Acquire();
+    MYSQL* conn = guard.get();
+    if (!conn) {
+        if (err) *err = "no mysql connection";
+        return false;
+    }
+    if (!Begin(conn, err)) return false;
+
+    // 先记录 clone 对应的 asset，删除 media 成功后同步摘除映射并减 ref_count。
+    long long asset_id = 0;
+    std::string mapping_sql =
+        "SELECT asset_id FROM media_object_asset WHERE media_id='" +
+        media_id + "' LIMIT 1";
+    if (mysql_query(conn, mapping_sql.c_str()) != 0) {
+        if (err) *err = mysql_error(conn);
+        Finish(conn, false);
+        return false;
+    }
+    MYSQL_RES* mapping_res = mysql_store_result(conn);
+    if (mapping_res) {
+        MYSQL_ROW row = mysql_fetch_row(mapping_res);
+        if (row && row[0]) {
+            try {
+                asset_id = std::stoll(row[0]);
+            } catch (...) {
+                asset_id = 0;
+            }
+        }
+        mysql_free_result(mapping_res);
+    }
+
+    // 先只在“未绑定”时删除 media_object；如果已被消息绑定则不动任何行。
+    static const char* kMediaSql =
+        "DELETE FROM media_object WHERE media_id=? AND owner_id=? "
+        "AND session_id='' AND message_id=''";
+    unsigned long media_len = 0;
+    long long owner = owner_id;
+    MYSQL_BIND media_bind[2];
+    std::memset(media_bind, 0, sizeof(media_bind));
+    BindString(&media_bind[0], media_id, &media_len);
+    BindInt64(&media_bind[1], &owner);
+    my_ulonglong affected = 0;
+    if (!ExecuteUpdate(conn, kMediaSql, media_bind, &affected, err)) {
+        Finish(conn, false);
+        return false;
+    }
+    if (affected == 0) {
+        Finish(conn, true);
+        return true;
+    }
+
+    if (asset_id > 0) {
+        std::string delete_mapping =
+            "DELETE FROM media_object_asset WHERE media_id='" + media_id + "'";
+        if (mysql_query(conn, delete_mapping.c_str()) != 0) {
+            if (err) *err = mysql_error(conn);
+            Finish(conn, false);
+            return false;
+        }
+        std::string dec_ref =
+            "UPDATE media_asset SET ref_count=GREATEST(ref_count-1,0) "
+            "WHERE id=" + std::to_string(asset_id);
+        if (mysql_query(conn, dec_ref.c_str()) != 0) {
+            if (err) *err = mysql_error(conn);
+            Finish(conn, false);
+            return false;
+        }
+    }
+
+    static const char* kVariantsSql =
+        "DELETE FROM media_variant WHERE media_id=?";
+    unsigned long variant_media_len = 0;
+    MYSQL_BIND variant_bind[1];
+    std::memset(variant_bind, 0, sizeof(variant_bind));
+    BindString(&variant_bind[0], media_id, &variant_media_len);
+    if (!ExecuteUpdate(conn, kVariantsSql, variant_bind, nullptr, err)) {
+        Finish(conn, false);
+        return false;
+    }
+    Finish(conn, true);
+    return true;
+}
+
+bool MediaDao::GetReadyAssetByHash(const std::string& sha256,
+                                   const std::string& kind, MediaAsset* asset,
+                                   bool* found, std::string* err) {
+    if (found) *found = false;
+    if (!pool_ || !asset) {
+        if (err) *err = "invalid arguments";
+        return false;
+    }
+    auto guard = pool_->Acquire();
+    MYSQL* conn = guard.get();
+    if (!conn) {
+        if (err) *err = "no mysql connection";
+        return false;
+    }
+    static const char* kSql =
+        "SELECT id, sha256, size_bytes, kind, mime_type, storage_bucket, "
+        "object_key, etag, width, height, duration_ms, blur_hash, "
+        "dominant_color, ref_count FROM media_asset "
+        "WHERE sha256=? AND kind=? AND status='ready' LIMIT 1";
+    unsigned long sha_len = 0, kind_len = 0;
+    MYSQL_BIND param[2];
+    std::memset(param, 0, sizeof(param));
+    BindString(&param[0], sha256, &sha_len);
+    BindString(&param[1], kind, &kind_len);
+
+    MYSQL_STMT* stmt = mysql_stmt_init(conn);
+    if (!stmt) {
+        if (err) *err = "mysql_stmt_init failed";
+        return false;
+    }
+    if (mysql_stmt_prepare(stmt, kSql, std::strlen(kSql)) != 0 ||
+        mysql_stmt_bind_param(stmt, param) != 0 ||
+        mysql_stmt_execute(stmt) != 0) {
+        if (err) *err = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
+
+    long long id = 0, size_out = 0, duration = 0;
+    int width = 0, height = 0, ref_count = 0;
+    char sha_buf[65], kind_buf[32], mime_buf[128], bucket_buf[64],
+        key_buf[1024], etag_buf[128], blur_buf[128], color_buf[32];
+    unsigned long sha_out_len = 0, kind_out_len = 0, mime_len = 0,
+                  bucket_len = 0, key_len = 0, etag_len = 0, blur_len = 0,
+                  color_len = 0;
+    MYSQL_BIND result[14];
+    std::memset(result, 0, sizeof(result));
+    result[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    result[0].buffer = &id;
+    result[1].buffer_type = MYSQL_TYPE_STRING;
+    result[1].buffer = sha_buf;
+    result[1].buffer_length = sizeof(sha_buf);
+    result[1].length = &sha_out_len;
+    result[2].buffer_type = MYSQL_TYPE_LONGLONG;
+    result[2].buffer = &size_out;
+    result[3].buffer_type = MYSQL_TYPE_STRING;
+    result[3].buffer = kind_buf;
+    result[3].buffer_length = sizeof(kind_buf);
+    result[3].length = &kind_out_len;
+    result[4].buffer_type = MYSQL_TYPE_STRING;
+    result[4].buffer = mime_buf;
+    result[4].buffer_length = sizeof(mime_buf);
+    result[4].length = &mime_len;
+    result[5].buffer_type = MYSQL_TYPE_STRING;
+    result[5].buffer = bucket_buf;
+    result[5].buffer_length = sizeof(bucket_buf);
+    result[5].length = &bucket_len;
+    result[6].buffer_type = MYSQL_TYPE_STRING;
+    result[6].buffer = key_buf;
+    result[6].buffer_length = sizeof(key_buf);
+    result[6].length = &key_len;
+    result[7].buffer_type = MYSQL_TYPE_STRING;
+    result[7].buffer = etag_buf;
+    result[7].buffer_length = sizeof(etag_buf);
+    result[7].length = &etag_len;
+    result[8].buffer_type = MYSQL_TYPE_LONG;
+    result[8].buffer = &width;
+    result[9].buffer_type = MYSQL_TYPE_LONG;
+    result[9].buffer = &height;
+    result[10].buffer_type = MYSQL_TYPE_LONGLONG;
+    result[10].buffer = &duration;
+    result[11].buffer_type = MYSQL_TYPE_STRING;
+    result[11].buffer = blur_buf;
+    result[11].buffer_length = sizeof(blur_buf);
+    result[11].length = &blur_len;
+    result[12].buffer_type = MYSQL_TYPE_STRING;
+    result[12].buffer = color_buf;
+    result[12].buffer_length = sizeof(color_buf);
+    result[12].length = &color_len;
+    result[13].buffer_type = MYSQL_TYPE_LONG;
+    result[13].buffer = &ref_count;
+    if (mysql_stmt_bind_result(stmt, result) != 0) {
+        if (err) *err = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
+    const int rc = mysql_stmt_fetch(stmt);
+    if (rc == MYSQL_NO_DATA) {
+        mysql_stmt_close(stmt);
+        return true;
+    }
+    if (rc != 0 && rc != MYSQL_DATA_TRUNCATED) {
+        if (err) *err = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
+    asset->id = id;
+    asset->sha256 = Truncate(sha_buf, sha_out_len, sizeof(sha_buf));
+    asset->size_bytes = size_out;
+    asset->kind = Truncate(kind_buf, kind_out_len, sizeof(kind_buf));
+    asset->mime_type = Truncate(mime_buf, mime_len, sizeof(mime_buf));
+    asset->storage_bucket =
+        Truncate(bucket_buf, bucket_len, sizeof(bucket_buf));
+    asset->object_key = Truncate(key_buf, key_len, sizeof(key_buf));
+    asset->etag = Truncate(etag_buf, etag_len, sizeof(etag_buf));
+    asset->width = width;
+    asset->height = height;
+    asset->duration_ms = duration;
+    asset->blur_hash = Truncate(blur_buf, blur_len, sizeof(blur_buf));
+    asset->dominant_color =
+        Truncate(color_buf, color_len, sizeof(color_buf));
+    asset->ref_count = ref_count;
+    if (found) *found = true;
+    mysql_stmt_close(stmt);
+    return true;
+}
+
+bool MediaDao::GetAssetIdForMedia(const std::string& media_id,
+                                  int64_t* asset_id, bool* found,
+                                  std::string* err) {
+    if (found) *found = false;
+    if (!pool_ || !asset_id) {
+        if (err) *err = "invalid arguments";
+        return false;
+    }
+    auto guard = pool_->Acquire();
+    MYSQL* conn = guard.get();
+    if (!conn) {
+        if (err) *err = "no mysql connection";
+        return false;
+    }
+    static const char* kSql =
+        "SELECT asset_id FROM media_object_asset WHERE media_id=? LIMIT 1";
+    unsigned long media_len = 0;
+    MYSQL_BIND param[1];
+    std::memset(param, 0, sizeof(param));
+    BindString(&param[0], media_id, &media_len);
+    MYSQL_STMT* stmt = mysql_stmt_init(conn);
+    if (!stmt) {
+        if (err) *err = "mysql_stmt_init failed";
+        return false;
+    }
+    if (mysql_stmt_prepare(stmt, kSql, std::strlen(kSql)) != 0 ||
+        mysql_stmt_bind_param(stmt, param) != 0 ||
+        mysql_stmt_execute(stmt) != 0) {
+        if (err) *err = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
+    long long aid = 0;
+    MYSQL_BIND result[1];
+    std::memset(result, 0, sizeof(result));
+    result[0].buffer_type = MYSQL_TYPE_LONGLONG;
+    result[0].buffer = &aid;
+    if (mysql_stmt_bind_result(stmt, result) != 0) {
+        if (err) *err = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
+    const int rc = mysql_stmt_fetch(stmt);
+    if (rc == MYSQL_NO_DATA) {
+        mysql_stmt_close(stmt);
+        return true;
+    }
+    if (rc != 0 && rc != MYSQL_DATA_TRUNCATED) {
+        if (err) *err = mysql_stmt_error(stmt);
+        mysql_stmt_close(stmt);
+        return false;
+    }
+    *asset_id = aid;
+    if (found) *found = true;
+    mysql_stmt_close(stmt);
+    return true;
+}
+
+bool MediaDao::LinkMediaToAsset(const std::string& media_id,
+                                const MediaAsset& asset,
+                                const std::string& task_type,
+                                std::string* err) {
+    if (!pool_) {
+        if (err) *err = "mysql pool not initialized";
+        return false;
+    }
+    auto guard = pool_->Acquire();
+    MYSQL* conn = guard.get();
+    if (!conn) {
+        if (err) *err = "no mysql connection";
+        return false;
+    }
+    if (!Begin(conn, err)) return false;
+    if (!UpdateMediaFromAsset(conn, media_id, asset, err)) {
+        Finish(conn, false);
+        return false;
+    }
+
+    static const char* kDeleteVariants =
+        "DELETE FROM media_variant WHERE media_id=?";
+    unsigned long media_len = 0;
+    MYSQL_BIND delete_bind[1];
+    std::memset(delete_bind, 0, sizeof(delete_bind));
+    BindString(&delete_bind[0], media_id, &media_len);
+    if (!ExecuteUpdate(conn, kDeleteVariants, delete_bind, nullptr, err)) {
+        Finish(conn, false);
+        return false;
+    }
+    std::string copy_sql =
+        "INSERT INTO media_variant(media_id, variant, format, width, height, "
+        "size_bytes, bitrate_kbps, object_key) "
+        "SELECT '" +
+        media_id +
+        "', variant, format, width, height, size_bytes, bitrate_kbps, "
+        "object_key FROM media_asset_variant WHERE asset_id=" +
+        std::to_string(asset.id);
+    if (mysql_query(conn, copy_sql.c_str()) != 0) {
+        if (err) *err = mysql_error(conn);
+        Finish(conn, false);
+        return false;
+    }
+    if (!task_type.empty() && !MarkTaskDone(conn, media_id, task_type, err)) {
+        Finish(conn, false);
+        return false;
+    }
+    if (!InsertAssetMapping(conn, media_id, asset.id, err)) {
+        Finish(conn, false);
+        return false;
+    }
+    std::string ref_sql =
+        "UPDATE media_asset SET ref_count=ref_count+1 WHERE id=" +
+        std::to_string(asset.id);
+    if (mysql_query(conn, ref_sql.c_str()) != 0) {
+        if (err) *err = mysql_error(conn);
+        Finish(conn, false);
+        return false;
+    }
+    Finish(conn, true);
+    return true;
+}
+
+bool MediaDao::CreateAssetAndLink(const std::string& media_id,
+                                  const MediaAsset& asset,
+                                  const std::vector<MediaVariant>& variants,
+                                  const std::string& task_type,
+                                  std::string* err) {
+    if (!pool_) {
+        if (err) *err = "mysql pool not initialized";
+        return false;
+    }
+    auto guard = pool_->Acquire();
+    MYSQL* conn = guard.get();
+    if (!conn) {
+        if (err) *err = "no mysql connection";
+        return false;
+    }
+    if (!Begin(conn, err)) return false;
+
+    static const char* kAssetSql =
+        "INSERT INTO media_asset(sha256, size_bytes, kind, mime_type, "
+        "storage_bucket, object_key, etag, width, height, duration_ms, "
+        "blur_hash, dominant_color, ref_count) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)";
+    unsigned long sha_len = 0, kind_len = 0, mime_len = 0, bucket_len = 0,
+                  key_len = 0, etag_len = 0, blur_len = 0, color_len = 0;
+    long long size = asset.size_bytes, width = asset.width,
+              height = asset.height, duration = asset.duration_ms;
+    MYSQL_BIND asset_bind[12];
+    std::memset(asset_bind, 0, sizeof(asset_bind));
+    BindString(&asset_bind[0], asset.sha256, &sha_len);
+    BindInt64(&asset_bind[1], &size);
+    BindString(&asset_bind[2], asset.kind, &kind_len);
+    BindString(&asset_bind[3], asset.mime_type, &mime_len);
+    BindString(&asset_bind[4], asset.storage_bucket, &bucket_len);
+    BindString(&asset_bind[5], asset.object_key, &key_len);
+    BindString(&asset_bind[6], asset.etag, &etag_len);
+    BindInt64(&asset_bind[7], &width);
+    BindInt64(&asset_bind[8], &height);
+    BindInt64(&asset_bind[9], &duration);
+    BindString(&asset_bind[10], asset.blur_hash, &blur_len);
+    BindString(&asset_bind[11], asset.dominant_color, &color_len);
+    if (!ExecuteUpdate(conn, kAssetSql, asset_bind, nullptr, err)) {
+        Finish(conn, false);
+        return false;
+    }
+    const int64_t asset_id =
+        static_cast<int64_t>(mysql_insert_id(conn));
+
+    static const char* kVariantSql =
+        "REPLACE INTO media_asset_variant(asset_id, variant, format, width, "
+        "height, size_bytes, bitrate_kbps, object_key) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?, ?)";
+    for (const auto& variant : variants) {
+        unsigned long variant_len = 0, format_len = 0, vkey_len = 0;
+        long long vwidth = variant.width, vheight = variant.height;
+        long long vsize = variant.size_bytes;
+        long long asset_id_buf = asset_id;
+        int bitrate = variant.bitrate_kbps;
+        MYSQL_BIND bind[8];
+        std::memset(bind, 0, sizeof(bind));
+        BindInt64(&bind[0], &asset_id_buf);
+        BindString(&bind[1], variant.variant, &variant_len);
+        BindString(&bind[2], variant.format, &format_len);
+        BindInt64(&bind[3], &vwidth);
+        BindInt64(&bind[4], &vheight);
+        BindInt64(&bind[5], &vsize);
+        BindInt(&bind[6], &bitrate);
+        BindString(&bind[7], variant.object_key, &vkey_len);
+        if (!ExecuteUpdate(conn, kVariantSql, bind, nullptr, err)) {
+            Finish(conn, false);
+            return false;
+        }
+    }
+
+    if (!UpdateMediaFromAsset(conn, media_id, asset, err) ||
+        (!task_type.empty() &&
+         !MarkTaskDone(conn, media_id, task_type, err)) ||
+        !InsertAssetMapping(conn, media_id, asset_id, err)) {
+        Finish(conn, false);
+        return false;
+    }
+    Finish(conn, true);
+    return true;
 }
 
 bool MediaDao::GetById(const std::string& media_id, MediaObject* media,

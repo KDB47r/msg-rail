@@ -1769,3 +1769,197 @@ body.chat-app {
   margin-top: 2px;
   font-size: 9px;
 }
+
+/* 消息右键 / 长按菜单与转发弹窗 ------------------------------- */
+.message-menu {
+  position: fixed;
+  z-index: 4000;
+  min-width: 156px;
+  padding: 6px;
+  border: 1px solid var(--mr-border);
+  border-radius: 10px;
+  background: var(--mr-surface);
+  box-shadow: var(--mr-shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.message-menu[hidden] {
+  display: none !important;
+}
+
+.message-menu button {
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--mr-text);
+  font-family: var(--mr-font);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-menu button:hover,
+.message-menu button:focus-visible {
+  background: var(--mr-accent-soft);
+  color: var(--mr-accent);
+  outline: none;
+}
+
+.forward-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 4100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(8, 10, 16, 0.58);
+}
+
+.forward-modal[hidden] {
+  display: none !important;
+}
+
+.forward-panel {
+  width: min(420px, 100%);
+  max-height: min(560px, 90vh);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--mr-border);
+  border-radius: 16px;
+  background: var(--mr-surface);
+  box-shadow: var(--mr-shadow);
+}
+
+.forward-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--mr-text);
+}
+
+.forward-head button {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--mr-text-3);
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.forward-head button:hover {
+  background: var(--mr-surface-2);
+  color: var(--mr-text);
+}
+
+.forward-hint {
+  font-size: 12px;
+  color: var(--mr-text-3);
+}
+
+.forward-session-list {
+  min-height: 90px;
+  max-height: 280px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.forward-session-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--mr-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.forward-session-item:hover {
+  background: var(--mr-surface-2);
+}
+
+.forward-session-item.selected {
+  border-color: var(--mr-accent);
+  background: var(--mr-accent-soft);
+}
+
+.forward-session-item .forward-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.forward-session-item .forward-uid {
+  color: var(--mr-text-3);
+  font-size: 11px;
+}
+
+.forward-user-input {
+  width: 100%;
+  height: 38px;
+  box-sizing: border-box;
+  padding: 0 11px;
+  border: 1px solid var(--mr-border);
+  border-radius: 9px;
+  background: var(--mr-surface-2);
+  color: var(--mr-text);
+  font-family: var(--mr-font);
+  font-size: 13px;
+}
+
+.forward-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.forward-actions button {
+  height: 36px;
+  padding: 0 18px;
+  border: 1px solid var(--mr-border);
+  border-radius: 9px;
+  background: var(--mr-surface);
+  color: var(--mr-text-2);
+  font-family: var(--mr-font);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.forward-actions button:hover {
+  border-color: var(--mr-border-strong);
+  color: var(--mr-text);
+}
+
+#forward-confirm {
+  border-color: var(--mr-accent);
+  background: var(--mr-accent);
+  color: #fff;
+}
+
+#forward-confirm:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.msg-row {
+  position: relative;
+}
