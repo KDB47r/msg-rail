@@ -1,0 +1,29 @@
+{
+  "servers": {
+    "time": {
+      "transport": "stdio",
+      "command": "{python}",
+      "args": ["-m", "app.mcp.servers.time_server"]
+    },
+    "weather": {
+      "transport": "stdio",
+      "command": "{python}",
+      "args": ["-m", "app.mcp.servers.weather_server"]
+    },
+    "fun": {
+      "transport": "stdio",
+      "command": "{python}",
+      "args": ["-m", "app.mcp.servers.fun_server"]
+    },
+    "web": {
+      "transport": "stdio",
+      "command": "{python}",
+      "args": ["-m", "app.mcp.servers.web_server"]
+    },
+    "knowledge": {
+      "transport": "stdio",
+      "command": "{python}",
+      "args": ["-m", "app.mcp.servers.knowledge_server"]
+    }
+  }
+}
