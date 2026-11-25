@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Companion · P1</title>
+  <style>
+    * { box-sizing: border-box; }
+
+    :root {
+      color-scheme: dark;
+      --bg: #0b0d12;
+      --panel: #141821;
+      --panel-2: #1b2130;
+      --border: #232a3a;
+      --text: #e8ecf4;
+      --muted: #8b95a7;
+      --accent: #7c9cff;
+      --user: #2a3550;
+      --assistant: #171c27;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(900px 500px at 50% -10%, rgba(124, 156, 255, 0.16), transparent 60%),
+        var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "PingFang SC",
+        "Microsoft YaHei", sans-serif;
+    }
+
+    .app {
+      max-width: 860px;
+      height: 100vh;
+      margin: 0 auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      letter-spacing: 0.2px;
+    }
+
+    .status {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+    }
+
+    .token {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      min-width: 150px;
+    }
+
+    .token input {
+      width: 100%;
+      padding: 7px 9px;
+      border-radius: 9px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      font: inherit;
+      font-size: 12px;
+      outline: none;
+    }
+
+    .token input:focus { border-color: var(--accent); }
+
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 8px 4px;
+      scroll-behavior: smooth;
+    }
+
+    .bubble {
+      max-width: 78%;
+      padding: 10px 14px;
+      border-radius: 16px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 14px;
+    }
+
+    .bubble.user {
+      align-self: flex-end;
+      background: var(--user);
+      border-bottom-right-radius: 4px;
+    }
+
+    .bubble.assistant {
+      align-self: flex-start;
+      background: var(--assistant);
+      border: 1px solid var(--border);
+      border-bottom-left-radius: 4px;
+    }
+
+    .composer {
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--panel);
+    }
+
+    textarea {
+      flex: 1;
+      min-height: 42px;
+      max-height: 140px;
+      resize: none;
+      border: 0;
+      outline: none;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      line-height: 1.5;
+    }
+
+    .actions { display: flex; gap: 8px; }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 8px 14px;
+      font: inherit;
+      font-size: 13px;
+      cursor: pointer;
+      transition: opacity 0.15s ease, transform 0.15s ease;
+    }
+
+    button:active { transform: translateY(1px); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    #send {
+      background: var(--accent);
+      color: #0b0d12;
+      font-weight: 600;
+    }
+
+    #stop, #new-chat {
+      background: var(--panel-2);
+      color: var(--text);
+    }
+
+    @media (max-width: 560px) {
+      .app { padding: 12px; }
+      header { align-items: flex-start; flex-direction: column; }
+      .header-actions { width: 100%; justify-content: space-between; }
+      .token { width: 100%; }
+      .bubble { max-width: 90%; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div>
+        <h1>AI Companion</h1>
+        <p class="status" id="status">P1 · 多轮对话</p>
+      </div>
+      <div class="header-actions">
+        <button type="button" id="new-chat">新对话</button>
+        <label class="token">
+          Dev Token
+          <input id="token" value="dev-token" autocomplete="off" />
+        </label>
+      </div>
+    </header>
+
+    <section id="messages" class="messages" aria-live="polite"></section>
+
+    <form id="composer" class="composer">
+      <textarea id="input" rows="2" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
+      <div class="actions">
+        <button type="button" id="stop" disabled>停止</button>
+        <button type="submit" id="send">发送</button>
+      </div>
+    </form>
+  </main>
+
+  <script>
+    const messagesEl = document.getElementById("messages");
+    const inputEl = document.getElementById("input");
+    const sendEl = document.getElementById("send");
+    const stopEl = document.getElementById("stop");
+    const newChatEl = document.getElementById("new-chat");
+    const statusEl = document.getElementById("status");
+    const tokenEl = document.getElementById("token");
+
+    const TOKEN_KEY = "ai_companion_token";
+    const CONVERSATION_KEY = "ai_companion_conversation_id";
+
+    tokenEl.value = localStorage.getItem(TOKEN_KEY) || "dev-token";
+    let controller = null;
+    let conversationId = localStorage.getItem(CONVERSATION_KEY);
+
+    function newId() {
+      if (crypto.randomUUID) return crypto.randomUUID();
+      return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+
+    function addBubble(role, text = "") {
+      const el = document.createElement("div");
+      el.className = `bubble ${role}`;
+      el.textContent = text;
+      messagesEl.appendChild(el);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return el;
+    }
+
+    function setBusy(busy) {
+      sendEl.disabled = busy;
+      stopEl.disabled = !busy;
+      statusEl.textContent = busy ? "P1 · 流式输出中…" : "P1 · 多轮对话";
+    }
+
+    function statusSuffix(status) {
+      if (status === "aborted") return "\n[已停止]";
+      if (status === "failed") return "\n[生成失败]";
+      return "";
+    }
+
+    function clearConversation() {
+      conversationId = null;
+      localStorage.removeItem(CONVERSATION_KEY);
+      messagesEl.innerHTML = "";
+      statusEl.textContent = "P1 · 新对话";
+    }
+
+    async function restoreConversation() {
+      if (!conversationId) {
+        statusEl.textContent = "P1 · 多轮对话";
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          `/v1/conversations/${encodeURIComponent(conversationId)}/messages?limit=50`,
+          { headers: { "Authorization": `Bearer ${tokenEl.value}` } }
+        );
+
+        if (!response.ok) {
+          if (response.status === 404) {
+            clearConversation();
+          } else if (response.status === 401) {
+            statusEl.textContent = "Token 无效，历史未加载";
+          }
+          return;
+        }
+
+        const data = await response.json();
+        const items = data.messages || [];
+        for (const message of items) {
+          const suffix = message.role === "assistant" ? statusSuffix(message.status) : "";
+          const text = message.content ? `${message.content}${suffix}` : suffix.trim();
+          addBubble(message.role, text);
+        }
+        statusEl.textContent = items.length
+          ? `P1 · 已恢复 ${items.length} 条消息`
+          : "P1 · 多轮对话";
+      } catch {
+        statusEl.textContent = "P1 · 历史加载失败";
+      }
+    }
+
+    function parseEventBlock(block) {
+      const parsed = { event: "message", data: "", id: null };
+      for (const line of block.split("\n")) {
+        if (line.startsWith(":")) continue;
+        if (line.startsWith("event:")) parsed.event = line.slice(6).trim();
+        else if (line.startsWith("data:")) parsed.data += line.slice(5).trim();
+        else if (line.startsWith("id:")) parsed.id = Number(line.slice(3).trim());
+      }
+      return parsed;
+    }
+
+    async function sendMessage() {
+      const text = inputEl.value.trim();
+      if (!text || controller) return;
+
+      inputEl.value = "";
+      addBubble("user", text);
+      const assistantEl = addBubble("assistant", "");
+      controller = new AbortController();
+      setBusy(true);
+
+      try {
+        const response = await fetch("/v1/chat/stream", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${tokenEl.value}`,
+            "Accept": "text/event-stream",
+          },
+          body: JSON.stringify({
+            message: text,
+            conversation_id: conversationId,
+            client_message_id: newId(),
+          }),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          const detail = await response.text();
+          throw new Error(`HTTP ${response.status}: ${detail}`);
+        }
+        if (!response.body) throw new Error("浏览器不支持流式响应");
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          let index;
+          while ((index = buffer.indexOf("\n\n")) >= 0) {
+            const block = buffer.slice(0, index);
+            buffer = buffer.slice(index + 2);
+            if (!block.trim()) continue;
+
+            const { event, data } = parseEventBlock(block);
+            if (!data) continue;
+
+            let payload;
+            try {
+              payload = JSON.parse(data);
+            } catch {
+              continue;
+            }
+
+            if (event === "message_start") {
+              conversationId = payload.conversation_id || conversationId;
+              if (conversationId) {
+                localStorage.setItem(CONVERSATION_KEY, conversationId);
+              }
+            } else if (event === "content_delta") {
+              assistantEl.textContent += payload.delta || "";
+              messagesEl.scrollTop = messagesEl.scrollHeight;
+            } else if (event === "tool_call") {
+              const name = payload.name || payload.call_id || "tool";
+              assistantEl.textContent += `\n[调用工具：${name}]\n`;
+            } else if (event === "tool_result") {
+              const preview = payload.preview || payload.status || "ok";
+              assistantEl.textContent += `[工具结果：${preview}]\n`;
+            } else if (event === "error") {
+              assistantEl.textContent += `\n[错误] ${payload.message || payload.code || "未知错误"}`;
+            } else if (event === "message_end") {
+              if (!assistantEl.textContent) assistantEl.textContent = "（无内容）";
+            }
+          }
+        }
+      } catch (error) {
+        if (error.name === "AbortError") {
+          assistantEl.textContent += "\n[已停止]";
+        } else {
+          assistantEl.textContent = `[请求失败] ${error.message}`;
+        }
+      } finally {
+        controller = null;
+        setBusy(false);
+      }
+    }
+
+    document.getElementById("composer").addEventListener("submit", (event) => {
+      event.preventDefault();
+      sendMessage();
+    });
+
+    inputEl.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+      }
+    });
+
+    stopEl.addEventListener("click", () => {
+      if (controller) controller.abort();
+    });
+
+    newChatEl.addEventListener("click", () => {
+      if (controller) controller.abort();
+      clearConversation();
+    });
+
+    tokenEl.addEventListener("change", () => {
+      localStorage.setItem(TOKEN_KEY, tokenEl.value);
+      messagesEl.innerHTML = "";
+      restoreConversation();
+    });
+
+    restoreConversation();
+  </script>
+</body>
+</html>
