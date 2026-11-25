@@ -24,7 +24,7 @@ LOG_DIR="$PROJECT_ROOT/logs"
 PROJECT_SOFTWARE="$PROJECT_ROOT/cmake/software_spark_push"
 KAFKA_HOME="${KAFKA_HOME:-}"
 WEB_DEMO_PORT=9001
-KAFKA_TOPICS=(push_to_comet broadcast_task)
+KAFKA_TOPICS=(push_to_comet broadcast_task ai_trigger)
 
 # MinIO：未安装时只告警，不影响文字聊天。
 MINIO_PORT=9002

@@ -191,6 +191,18 @@
             </span>
             <span class="attach-label">文件</span>
           </button>
+          <button type="button" class="attach-item" id="attach-ai-assistant" role="menuitem">
+            <span class="attach-icon">
+              <svg class="mr-icon" aria-hidden="true"><use href="#i-plus"></use></svg>
+            </span>
+            <span class="attach-label">AI 助手</span>
+          </button>
+          <button type="button" class="attach-item hidden" id="attach-ai-invite" role="menuitem">
+            <span class="attach-icon">
+              <svg class="mr-icon" aria-hidden="true"><use href="#i-plus"></use></svg>
+            </span>
+            <span class="attach-label">邀请小桁</span>
+          </button>
         </div>
         <button id="plus-btn" type="button" title="发送图片/视频/文件" aria-label="更多功能"
                 aria-haspopup="menu" aria-expanded="false" aria-controls="attach-panel">
@@ -271,6 +283,10 @@
     let forwardLoading = false;
     let longPressTimer = null;
     let suppressClickUntil = 0;
+    // P6 AI Companion
+    let aiBots = null;
+    let aiBotLoadPromise = null;
+    const aiStreams = new Map(); // job_id -> { bubble, text, sessionId, stopBtn }
 
     // 配置
     const logicBase = window.location.protocol + '//' + window.location.hostname + ':9101';
@@ -297,6 +313,47 @@
         throw err;
       }
       return body.data || {};
+    }
+
+    function contentObject(content) {
+      if (!content) return null;
+      if (typeof content === 'string') {
+        try { return JSON.parse(content); } catch (e) { return null; }
+      }
+      return (typeof content === 'object') ? content : null;
+    }
+
+    function isPrivateAiSession(peerId) {
+      return !!(aiBots && aiBots.private_bot &&
+                Number(peerId) === Number(aiBots.private_bot.user_id));
+    }
+
+    function updateAiAttachMenu() {
+      const inviteBtn = document.getElementById('attach-ai-invite');
+      if (!inviteBtn) return;
+      const show = !!(currentSessionId && aiBots &&
+                      !isPrivateAiSession(currentPeerId));
+      inviteBtn.classList.toggle('hidden', !show);
+    }
+
+    async function loadAiBots() {
+      if (!token) return null;
+      if (aiBots) return aiBots;
+      if (aiBotLoadPromise) return aiBotLoadPromise;
+      aiBotLoadPromise = apiPost('/api/ai/bots', {})
+        .then(data => {
+          aiBots = data;
+          if (aiBots.private_bot) UserProfile.prime(aiBots.private_bot);
+          if (aiBots.shared_bot) UserProfile.prime(aiBots.shared_bot);
+          updateAiAttachMenu();
+          return aiBots;
+        })
+        .catch(err => {
+          console.warn('load ai bots failed', err);
+          return null;
+        })
+        .finally(() => { aiBotLoadPromise = null; });
+      return aiBotLoadPromise;
     }
 
     function setUnreadBadge(el, count) {
@@ -1009,7 +1066,8 @@
 
     // 上传期间锁住加号与已启用的附件入口，避免并发上传互相覆盖状态提示。
     function setAttachmentBusy(busy) {
-      ['plus-btn', 'attach-image', 'attach-video', 'attach-file'].forEach(id => {
+      ['plus-btn', 'attach-image', 'attach-video', 'attach-file',
+       'attach-ai-assistant', 'attach-ai-invite'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.disabled = busy;
       });
@@ -1382,6 +1440,7 @@
           (myProfile && myProfile.name) || (authNow && authNow.name) ||
           ('User ' + currentUserId);
         refreshMyProfile();
+        loadAiBots();
         loadSingleSessionList(); // 自动刷新列表
         startNavPolling();
       } else {
@@ -1434,6 +1493,7 @@
         UserProfile.applyAvatar(chatAvatar, profile, peerId);
       }).catch(() => {});
       document.getElementById('session-id-disp').textContent = sessionId;
+      updateAiAttachMenu();
 
       // 清空当前消息框并加载历史（首次）
       document.getElementById('messages').innerHTML = '';
@@ -1939,6 +1999,7 @@
       if (!prepend && !keepScroll) {
         msgsDiv.scrollTop = msgsDiv.scrollHeight;
       }
+      return { row, bubble };
     }
 
     function appendSystemMsg(text) {
@@ -1948,6 +2009,177 @@
       el.textContent = text;
       msgsDiv.appendChild(el);
       msgsDiv.scrollTop = msgsDiv.scrollHeight;
+    }
+
+    // P6：气氛组邀请/加入/退出用居中的系统卡片展示。
+    function appendAiSystemCard(content, opts) {
+      const c = contentObject(content);
+      if (!c || c.type !== 'system' || !c.event) return false;
+      const options = opts || {};
+      const msgsDiv = document.getElementById('messages');
+      const card = document.createElement('div');
+      card.className = 'msg-system msg-system-card';
+      const text = document.createElement('div');
+      text.textContent = c.text || '';
+      card.appendChild(text);
+
+      if (c.event === 'bot_invite' && c.status === 'pending' &&
+          Number(c.inviter_id) !== Number(currentUserId)) {
+        const actions = document.createElement('div');
+        actions.className = 'msg-system-actions';
+        const accept = document.createElement('button');
+        accept.type = 'button';
+        accept.className = 'msg-system-btn primary';
+        accept.textContent = '同意';
+        const reject = document.createElement('button');
+        reject.type = 'button';
+        reject.className = 'msg-system-btn';
+        reject.textContent = '拒绝';
+        const respond = async (ok) => {
+          try {
+            await apiPost('/api/ai/respond', {
+              session_id: options.sessionId || currentSessionId,
+              accept: ok
+            });
+            actions.remove();
+            text.textContent = ok ? '你已同意小桁加入' : '你已拒绝小桁加入';
+          } catch (e) {
+            showToast('操作失败: ' + (e && e.message ? e.message : e));
+          }
+        };
+        accept.onclick = () => respond(true);
+        reject.onclick = () => respond(false);
+        actions.appendChild(accept);
+        actions.appendChild(reject);
+        card.appendChild(actions);
+      } else if (c.event === 'bot_invite' && c.status === 'pending') {
+        const hint = document.createElement('div');
+        hint.className = 'msg-time';
+        hint.textContent = '等待对方同意';
+        card.appendChild(hint);
+      }
+
+      if (options.prepend && msgsDiv.firstChild) {
+        msgsDiv.insertBefore(card, msgsDiv.firstChild);
+      } else {
+        msgsDiv.appendChild(card);
+        if (!options.keepScroll) msgsDiv.scrollTop = msgsDiv.scrollHeight;
+      }
+      return true;
+    }
+
+    function handleAiStream(content) {
+      const c = contentObject(content);
+      if (!c || c.type !== 'ai_stream') return false;
+      if (c.session_id && c.session_id !== currentSessionId) return true;
+
+      let state = aiStreams.get(c.job_id);
+      if (!c.error && !state) {
+        const profile = { user_id: Number(c.bot_user_id), name: '小桁' };
+        UserProfile.prime(profile);
+        const created = appendMsgRow('', false, c.bot_user_id, '',
+                                     { sender: profile, keepScroll: true });
+        created.bubble.classList.add('msg-ai-stream');
+        const stopBtn = document.createElement('button');
+        stopBtn.type = 'button';
+        stopBtn.className = 'ai-stop-btn';
+        stopBtn.textContent = '停止回复';
+        state = {
+          bubble: created.bubble,
+          text: '',
+          sessionId: c.session_id || currentSessionId,
+          stopBtn
+        };
+        aiStreams.set(c.job_id, state);
+        if (Number(c.mentioner_id) === Number(currentUserId)) {
+          stopBtn.onclick = () => stopAiReply(c.job_id, state);
+          created.bubble.parentElement.appendChild(stopBtn);
+        }
+      }
+
+      if (c.stopped) {
+        if (state) {
+          state.bubble.classList.add('msg-ai-error');
+          state.bubble.textContent = (state.text || '') +
+            (state.text ? '\n' : '') + '[已停止]';
+          if (state.stopBtn) state.stopBtn.remove();
+          state.stopBtn = null;
+        }
+        return true;
+      }
+
+      if (c.error) {
+        const message = c.error.message || c.error.code || 'AI 回复失败';
+        if (state) {
+          state.bubble.classList.add('msg-ai-error');
+          state.bubble.textContent = (state.text || '') +
+            (state.text ? '\n' : '') + '小桁回复失败：' + message;
+          if (state.stopBtn) state.stopBtn.remove();
+          state.stopBtn = null;
+        } else {
+          appendSystemMsg('小桁回复失败：' + message);
+        }
+        return true;
+      }
+
+      if (state && typeof c.delta === 'string') {
+        state.text += c.delta;
+        state.bubble.textContent = state.text;
+        const msgsDiv = document.getElementById('messages');
+        msgsDiv.scrollTop = msgsDiv.scrollHeight;
+      }
+      return true;
+    }
+
+    function maybeFinalizeAiStream(obj) {
+      const c = (obj && obj.ai_job_id)
+        ? obj
+        : contentObject(obj && obj.content);
+      if (!c || !c.ai_job_id) return false;
+      const state = aiStreams.get(c.ai_job_id);
+      if (!state) return false;
+      state.bubble.textContent = c.content || c.text || state.text;
+      if (state.stopBtn) state.stopBtn.remove();
+      aiStreams.delete(c.ai_job_id);
+      return true;
+    }
+
+    async function stopAiReply(jobId, state) {
+      try {
+        await apiPost('/api/ai/stop', { job_id: jobId });
+        if (state) {
+          if (state.stopBtn) state.stopBtn.remove();
+          state.stopBtn = null;
+          state.bubble.classList.add('msg-ai-error');
+          state.bubble.textContent = (state.text || '') +
+            (state.text ? '\n' : '') + '[已停止]';
+        }
+      } catch (e) {
+        showToast('停止失败: ' + (e && e.message ? e.message : e));
+      }
+    }
+
+    async function openAiAssistant() {
+      try {
+        const bots = await loadAiBots();
+        if (!bots || !bots.private_bot) throw new Error('AI 助手未配置');
+        await openSingleChat(bots.private_bot.user_id);
+      } catch (e) {
+        showToast('打开 AI 助手失败: ' + (e && e.message ? e.message : e));
+      }
+    }
+
+    async function inviteSharedBot() {
+      if (!currentSessionId) {
+        showToast('请先打开一个单聊');
+        return;
+      }
+      try {
+        await apiPost('/api/ai/invite', { session_id: currentSessionId });
+        showToast('邀请已发送，等待对方同意');
+      } catch (e) {
+        showToast('邀请失败: ' + (e && e.message ? e.message : e));
+      }
     }
 
     // --- 核心业务逻辑 (复用原有逻辑，适配新UI) ---
@@ -2037,12 +2269,85 @@
         if (ws !== socket) return;
         try {
           const obj = JSON.parse(ev.data);
+          if (obj.type === 'ai_stream') {
+            if (currentSessionId && obj.session_id &&
+                obj.session_id !== currentSessionId) {
+              loadSingleSessionList();
+              return;
+            }
+            handleAiStream(obj);
+            return;
+          }
+          if (obj.type === 'system' && obj.event) {
+            if (currentSessionId && obj.session_id &&
+                obj.session_id !== currentSessionId) {
+              loadSingleSessionList();
+              refreshGlobalUnread();
+              return;
+            }
+            appendAiSystemCard(obj, { sessionId: obj.session_id });
+            markCurrentSessionRead();
+            loadSingleSessionList();
+            return;
+          }
+          if (obj.type === 'text' && obj.ai_job_id) {
+            if (currentSessionId && obj.session_id &&
+                obj.session_id !== currentSessionId) {
+              loadSingleSessionList();
+              return;
+            }
+            if (!maybeFinalizeAiStream(obj)) {
+              const senderId = Number(obj.from_user_id ||
+                                      obj.bot_user_id || 0);
+              appendMsgRow(obj.content, false, senderId, '',
+                           { sender: { user_id: senderId, name: '小桁' } });
+            }
+            markCurrentSessionRead();
+            return;
+          }
           if (obj.type === 'ack') {
             // console.log('Ack:', obj.msg_id);
           } else if (obj.type === 'single_chat') {
              // 收到单聊消息
              // const sender = obj.sender_id; // 假设后端下发 sender_id
-             
+             const wsContent = contentObject(obj.content);
+             const wsRawSessionId = obj.session_id ||
+               (wsContent && wsContent.session_id) || '';
+             const wsBelongs = !currentSessionId || !wsRawSessionId ||
+               wsRawSessionId === currentSessionId;
+
+             if (wsContent && wsContent.type === 'ai_stream') {
+               if (!wsBelongs) {
+                 loadSingleSessionList();
+                 return;
+               }
+               handleAiStream(wsContent);
+               return;
+             }
+             if (wsContent && wsContent.type === 'system' && wsContent.event) {
+               if (!wsBelongs) {
+                 loadSingleSessionList();
+                 refreshGlobalUnread();
+                 return;
+               }
+               appendAiSystemCard(wsContent, {
+                 sessionId: wsRawSessionId || currentSessionId
+               });
+               markCurrentSessionRead();
+               loadSingleSessionList();
+               return;
+             }
+             if (wsContent && wsContent.ai_job_id) {
+               if (!wsBelongs) {
+                 loadSingleSessionList();
+                 return;
+               }
+               if (maybeFinalizeAiStream(obj)) {
+                 markCurrentSessionRead();
+                 return;
+               }
+             }
+
              const imageContent = extractImageContent(obj.content);
              const videoContent = extractVideoContent(obj.content);
              const fileContent = extractFileContent(obj.content);
@@ -2328,6 +2633,16 @@
            : [...ascendingMsgs].reverse();
          orderedMsgs.forEach(m => {
            lastHistorySeq = Math.max(lastHistorySeq, m.msg_seq || 0);
+           const historyContent = contentObject(m.content);
+           if (historyContent && historyContent.type === 'system' &&
+               historyContent.event) {
+             appendAiSystemCard(historyContent, {
+               sessionId: m.session_id,
+               prepend: !isInitial,
+               keepScroll: !isInitial
+             });
+             return;
+           }
            const isMe = (m.sender_id === currentUserId);
            const text = getMsgText(m);
            const imageContent = extractImageContent(m.content);
@@ -2386,11 +2701,21 @@
        try {
          // 文本也走 HTTP 发送：立即拿到 msg_seq，消息右键可直接转发；
          // 接收方仍然通过 Kafka -> Job -> Comet 实时收到。
-         const sent = await apiPost('/api/message/send', {
+         const body = {
            to_user_id: Number(currentPeerId),
            msg_type: 'text',
            content: text
-         });
+         };
+         // 结构化 mention：服务端只看 mentions，不解析正文。
+         if (aiBots && aiBots.shared_bot && !isPrivateAiSession(currentPeerId) &&
+             text.includes('@小桁')) {
+           body.mentions = [{
+             user_id: Number(aiBots.shared_bot.user_id),
+             name: '小桁',
+             type: 'bot'
+           }];
+         }
+         const sent = await apiPost('/api/message/send', body);
          appendMsgRow(text, true, currentUserId, undefined, {
            msg: {
              session_id: sent.session_id,
@@ -2596,6 +2921,8 @@
     const videoOption = document.getElementById('attach-video');
     const genericFileInput = document.getElementById('generic-file');
     const fileOption = document.getElementById('attach-file');
+    const aiAssistantOption = document.getElementById('attach-ai-assistant');
+    const aiInviteOption = document.getElementById('attach-ai-invite');
 
     function setAttachPanel(open) {
       attachPanel.classList.toggle('hidden', !open);
@@ -2637,6 +2964,14 @@
       const file = e.target.files && e.target.files[0];
       e.target.value = '';
       if (file) sendGenericFile(file);
+    };
+    aiAssistantOption.onclick = () => {
+      setAttachPanel(false);
+      openAiAssistant();
+    };
+    aiInviteOption.onclick = () => {
+      setAttachPanel(false);
+      inviteSharedBot();
     };
     document.addEventListener('click', (e) => {
       if (attachPanel.classList.contains('hidden')) return;
@@ -2681,6 +3016,8 @@
       // WebSocket 握手失败后会通过 HTTP 再确认 token，只有明确 401 才清理会话
     }
     updateUIState();
+    loadAiBots();
+    updateAiAttachMenu();
 
     // 从联系人页跳转过来时直接打开对应单聊。
     const peerParam = new URLSearchParams(window.location.search).get('peer');

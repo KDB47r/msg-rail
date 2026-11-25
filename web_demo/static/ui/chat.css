@@ -758,6 +758,54 @@
   font-size: 12px;
 }
 
+.msg-system-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  max-width: 70%;
+  text-align: center;
+}
+
+.msg-system-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.msg-system-btn {
+  border: 1px solid var(--mr-border);
+  border-radius: var(--mr-r-pill);
+  background: var(--mr-surface-1);
+  color: var(--mr-text-1);
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.msg-system-btn.primary {
+  border-color: var(--mr-accent);
+  background: var(--mr-accent);
+  color: #fff;
+}
+
+.ai-stop-btn {
+  align-self: flex-start;
+  margin: 2px 0 8px 46px;
+  border: 1px solid var(--mr-border);
+  border-radius: var(--mr-r-pill);
+  background: transparent;
+  color: var(--mr-text-2);
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.msg-bubble.msg-ai-error {
+  color: #b42318;
+  background: rgba(180, 35, 24, 0.08);
+  border: 1px solid rgba(180, 35, 24, 0.25);
+}
+
 /* Composer --------------------------------------------------------------- */
 #input-area,
 #input-box {

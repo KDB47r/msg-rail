@@ -72,6 +72,10 @@ void HttpApiServer::handleFriendRequest(const HttpRequest& req,
         WriteError(resp, 400, "cannot add yourself");
         return;
     }
+    if (ai_service_ && ai_service_->IsBot(to_user_id)) {
+        WriteError(resp, 400, "bot accounts cannot be added as friends");
+        return;
+    }
     if (Utf8CharCount(message) > 100) {
         WriteError(resp, 400, "message exceeds 100 characters");
         return;
@@ -371,15 +375,23 @@ void HttpApiServer::handleOpenSingleSession(const HttpRequest& req,
         }
         return;
     }
-    bool is_friend = false;
-    if (!friend_service_->AreFriends(user_id, peer_user_id, &is_friend,
-                                     &err)) {
-        WriteError(resp, 500, "check friendship failed: " + err);
+    // 私人 AI 助手是固定 bot 联系人，不要求好友关系；气氛组 bot 不参与 1:1。
+    const bool private_bot = ai_service_ && ai_service_->IsPrivateBot(peer_user_id);
+    if (ai_service_ && ai_service_->IsSharedBot(peer_user_id)) {
+        WriteError(resp, 400, "shared bot cannot be used as a 1:1 peer");
         return;
     }
-    if (!is_friend) {
-        WriteError(resp, 403, "only friends can start a single chat");
-        return;
+    if (!private_bot) {
+        bool is_friend = false;
+        if (!friend_service_->AreFriends(user_id, peer_user_id, &is_friend,
+                                         &err)) {
+            WriteError(resp, 500, "check friendship failed: " + err);
+            return;
+        }
+        if (!is_friend) {
+            WriteError(resp, 403, "only friends can start a single chat");
+            return;
+        }
     }
 
     Session session;

@@ -121,6 +121,19 @@ bool ConversationStore::GetHistory(const std::string& session_id,
                                       err_msg);
 }
 
+bool ConversationStore::GetRecentMessages(const std::string& session_id,
+                                          int64_t after_seq,
+                                          int64_t before_seq, int limit,
+                                          std::vector<Message>* messages,
+                                          std::string* err_msg) {
+    if (!message_dao_) {
+        if (err_msg) *err_msg = "message dao not initialized";
+        return false;
+    }
+    return message_dao_->ListMessagesAfter(session_id, after_seq, before_seq,
+                                           limit, messages, err_msg);
+}
+
 bool ConversationStore::GetMessageBySeq(const std::string& session_id,
                                         int64_t msg_seq, Message* message,
                                         std::string* err_msg) {

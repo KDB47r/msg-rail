@@ -205,7 +205,7 @@ HttpApiServer::HttpApiServer(uint16_t port, ConversationStore* store,
                              KafkaProducer* broadcast_producer,
                              DanmakuDao* danmaku_dao, MediaDao* media_dao,
                              S3Client* s3_client, MediaCache* media_cache,
-                             const Config& config)
+                             AiService* ai_service, const Config& config)
     : store_(store),
       user_dao_(user_dao),
       friend_service_(friend_service),
@@ -218,6 +218,10 @@ HttpApiServer::HttpApiServer(uint16_t port, ConversationStore* store,
       media_dao_(media_dao),
       s3_client_(s3_client),
       media_cache_(media_cache),
+      ai_service_(ai_service),
+      ai_internal_token_(config.ai_internal_token),
+      ai_private_bot_user_id_(config.ai_private_bot_user_id),
+      ai_shared_bot_user_id_(config.ai_shared_bot_user_id),
       admin_account_(config.admin_account),
       admin_password_hash_(config.admin_password_hash),
       admin_user_id_(config.admin_user_id),
@@ -302,6 +306,16 @@ void HttpApiServer::onRequest(const HttpRequest& req, HttpResponse* resp) {
         {"/api/session/unread", &HttpApiServer::handleUnread}, // 获取未读消息数 read
         {"/api/session/unread_summary", &HttpApiServer::handleUnreadSummary},
         {"/api/session/open_single", &HttpApiServer::handleOpenSingleSession},
+        {"/api/ai/bots", &HttpApiServer::handleAiBots},
+        {"/api/ai/invite", &HttpApiServer::handleAiInvite},
+        {"/api/ai/respond", &HttpApiServer::handleAiRespond},
+        {"/api/ai/remove", &HttpApiServer::handleAiRemove},
+        {"/api/ai/status", &HttpApiServer::handleAiStatus},
+        {"/api/ai/stop", &HttpApiServer::handleAiStop},
+        {"/internal/ai/context", &HttpApiServer::handleInternalAiContext},
+        {"/internal/ai/delta", &HttpApiServer::handleInternalAiDelta},
+        {"/internal/ai/finalize", &HttpApiServer::handleInternalAiFinalize},
+        {"/internal/ai/fail", &HttpApiServer::handleInternalAiFail},
         {"/api/user/profile", &HttpApiServer::handleUserProfileGet},
         {"/api/user/profile/update", &HttpApiServer::handleUserProfileUpdate},
         {"/api/user/search", &HttpApiServer::handleUserSearch},
@@ -429,6 +443,26 @@ int64_t HttpApiServer::AuthenticateRequest(const HttpRequest& req,
     }
 
     return user_id;
+}
+
+bool HttpApiServer::RequireInternalAuth(const HttpRequest& req,
+                                        HttpResponse* resp) {
+    if (ai_internal_token_.empty()) {
+        WriteError(resp, 500, "internal token not configured");
+        return false;
+    }
+    std::string auth = req.getHeader("Authorization");
+    const std::string prefix = "Bearer ";
+    if (auth.size() <= prefix.size() ||
+        auth.compare(0, prefix.size(), prefix) != 0) {
+        WriteError(resp, 401, "internal bearer token required");
+        return false;
+    }
+    if (auth.substr(prefix.size()) != ai_internal_token_) {
+        WriteError(resp, 401, "invalid internal token");
+        return false;
+    }
+    return true;
 }
 
 // ---- 会话归属校验（防止越权 IDOR） ----

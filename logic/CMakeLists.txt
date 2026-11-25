@@ -12,6 +12,9 @@ add_executable(logic_server
   http_handlers_danmaku.cpp
   http_handlers_admin.cpp
   http_handlers_media.cpp
+  http_handlers_ai.cpp
+  ai_dao.cpp
+  ai_service.cpp
   user_dao.cpp
   friend_dao.cpp
   friend_service.cpp

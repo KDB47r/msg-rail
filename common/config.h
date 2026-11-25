@@ -14,7 +14,17 @@ struct Config {
     std::string kafka_brokers;
     std::string kafka_push_topic;
     std::string kafka_broadcast_topic;
+    std::string kafka_ai_trigger_topic;
     std::string kafka_consumer_group;
+
+    // ---- P6 AI Companion ----
+    // 两个 bot 都是普通 user 行，固定 ID 便于 Logic 热路径做 O(1) 判断。
+    int64_t ai_private_bot_user_id{910000000000001LL};
+    int64_t ai_shared_bot_user_id{910000000000002LL};
+    // AI Worker 调用 Logic 内部接口时使用的共享密钥。
+    std::string ai_internal_token;
+    // 气氛组上下文最多读取多少条消息。
+    int ai_context_message_limit{30};
 
     // Redis/MySQL 配置（连接池参数）
     std::string redis_host;

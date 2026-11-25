@@ -150,6 +150,21 @@ Kafka 默认路径是 `~/software/kafka_2.13-4.1.2`，可以通过环境变量�
 
 ```bash
 KAFKA_HOME=/path/to/kafka ./scripts/start_all.sh
+
+
+  # 1. MsgRail
+  cd ~/Linux/Spark_Push
+  unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
+  bash scripts/start_all.sh
+
+  # 2. AI Companion
+  cd ~/Linux/AI_Companion
+  unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
+  .venv/bin/uvicorn app.asgi:app --host 127.0.0.1 --port 8000
+
+  # 3. AI Worker
+  cd ~/Linux/AI_Companion
+  scripts/run_ai_worker.sh
 ```
 
 ### 5. 打开演示页面

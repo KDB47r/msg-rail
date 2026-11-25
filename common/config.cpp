@@ -84,7 +84,12 @@ Config LoadConfig(const std::string& path) {
     cfg.kafka_brokers = "127.0.0.1:9092";
     cfg.kafka_push_topic = "push_to_comet";
     cfg.kafka_broadcast_topic = "broadcast_task";
+    cfg.kafka_ai_trigger_topic = "ai_trigger";
     cfg.kafka_consumer_group = "spark_push_group";
+    cfg.ai_private_bot_user_id = 910000000000001LL;
+    cfg.ai_shared_bot_user_id = 910000000000002LL;
+    cfg.ai_internal_token = "dev-internal-token";
+    cfg.ai_context_message_limit = 30;
     cfg.redis_host = "127.0.0.1";
     cfg.redis_port = 6379;
     cfg.redis_password.clear();
@@ -192,8 +197,21 @@ Config LoadConfig(const std::string& path) {
             cfg.kafka_push_topic = value;
         else if (key == "kafka_broadcast_topic")
             cfg.kafka_broadcast_topic = value;
+        else if (key == "kafka_ai_trigger_topic")
+            cfg.kafka_ai_trigger_topic = value;
         else if (key == "kafka_consumer_group")
             cfg.kafka_consumer_group = value;
+        else if (key == "ai_private_bot_user_id")
+            cfg.ai_private_bot_user_id =
+                ParseInt64Or(key, value, cfg.ai_private_bot_user_id);
+        else if (key == "ai_shared_bot_user_id")
+            cfg.ai_shared_bot_user_id =
+                ParseInt64Or(key, value, cfg.ai_shared_bot_user_id);
+        else if (key == "ai_internal_token")
+            cfg.ai_internal_token = value;
+        else if (key == "ai_context_message_limit")
+            cfg.ai_context_message_limit =
+                ParseIntOr(key, value, cfg.ai_context_message_limit);
         else if (key == "redis_host")
             cfg.redis_host = value;
         else if (key == "redis_port")

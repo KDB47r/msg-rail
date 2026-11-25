@@ -29,14 +29,16 @@ LogicServiceImpl::LogicServiceImpl(ConversationStore* store,
                                    FriendService* friend_service,
                                    KafkaProducer* producer,
                                    KafkaProducer* broadcast_producer,
-                                   RedisStore* redis_store)
+                                   RedisStore* redis_store,
+                                   AiService* ai_service)
     : store_(store),
       group_member_dao_(group_member_dao),
       user_dao_(user_dao),
       friend_service_(friend_service),
       producer_(producer),
       broadcast_producer_(broadcast_producer),
-      redis_store_(redis_store) {}
+      redis_store_(redis_store),
+      ai_service_(ai_service) {}
 
 // 填充统一错误码和错误信息。
 void LogicServiceImpl::SetError(ErrorInfo* e, int code,
@@ -287,26 +289,37 @@ void LogicServiceImpl::HandleUpstreamMessage(
         session_id =
             "single:" + std::to_string(min_id) + ":" + std::to_string(max_id);
 
-        // 单聊只允许好友：Comet 是主要发送入口，权限必须在 Logic 再校验一次，
-        // 不能只依赖 HTTP /api/message/send。
-        if (!friend_service_) {
-            SetError(response->mutable_error(), 500,
-                     "friend service not initialized");
+        if (ai_service_ && ai_service_->IsSharedBot(to_user)) {
+            SetError(response->mutable_error(), 400,
+                     "shared bot cannot be used as a 1:1 peer");
             return;
         }
-        bool is_friend = false;
-        std::string friend_err;
-        if (!friend_service_->AreFriends(from_user, to_user, &is_friend,
-                                         &friend_err)) {
-            LogError("AreFriends failed: " + friend_err);
-            SetError(response->mutable_error(), 500,
-                     "check friendship failed");
-            return;
-        }
-        if (!is_friend) {
-            SetError(response->mutable_error(), 403,
-                     "only friends can send single chat messages");
-            return;
+
+        // 私人 AI 助手是特殊联系人：不需要好友关系，但不能是气氛组 bot。
+        const bool private_bot_target =
+            ai_service_ && ai_service_->IsPrivateBot(to_user);
+        if (!private_bot_target) {
+            // 单聊只允许好友：Comet 是主要发送入口，权限必须在 Logic 再校验一次，
+            // 不能只依赖 HTTP /api/message/send。
+            if (!friend_service_) {
+                SetError(response->mutable_error(), 500,
+                         "friend service not initialized");
+                return;
+            }
+            bool is_friend = false;
+            std::string friend_err;
+            if (!friend_service_->AreFriends(from_user, to_user, &is_friend,
+                                             &friend_err)) {
+                LogError("AreFriends failed: " + friend_err);
+                SetError(response->mutable_error(), 500,
+                         "check friendship failed");
+                return;
+            }
+            if (!is_friend) {
+                SetError(response->mutable_error(), 403,
+                         "only friends can send single chat messages");
+                return;
+            }
         }
 
         // 查询目标用户的路由：先查本地缓存（shared_mutex 读锁），miss 则查
@@ -468,6 +481,22 @@ void LogicServiceImpl::HandleUpstreamMessage(
     if (!deliver_ok) {
         SetError(response->mutable_error(), 500,
                  "send message to kafka failed");
+        return;
+    }
+
+    // 用户消息已进入发送链路后，再异步触发 AI。这里不读历史、不调模型。
+    if (scene == SCENE_SINGLE && ai_service_) {
+        if (ai_service_->IsPrivateBot(to_user)) {
+            if (!ai_service_->TriggerPrivate(session_id, from_user, to_user,
+                                             msg_id, push_json)) {
+                LogError("AI private trigger failed session=" + session_id);
+            }
+        } else if (msg_type == MSG_TYPE_TEXT) {
+            if (!ai_service_->MaybeTriggerShared(session_id, from_user, to_user,
+                                                 msg_id, push_json)) {
+                LogError("AI shared trigger failed session=" + session_id);
+            }
+        }
     }
 }
 

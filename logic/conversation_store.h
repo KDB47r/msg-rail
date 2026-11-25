@@ -38,6 +38,12 @@ class ConversationStore {
                     int limit, std::vector<Message>* messages,
                     std::string* err_msg);
 
+    // 最近 limit 条 after_seq < msg_seq <= before_seq 的消息（正序）。
+    bool GetRecentMessages(const std::string& session_id, int64_t after_seq,
+                           int64_t before_seq, int limit,
+                           std::vector<Message>* messages,
+                           std::string* err_msg);
+
     // 读取单条消息，供消息转发定位源消息。
     bool GetMessageBySeq(const std::string& session_id, int64_t msg_seq,
                          Message* message, std::string* err_msg);

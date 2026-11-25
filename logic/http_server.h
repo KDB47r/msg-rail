@@ -2,6 +2,7 @@
 
 #include <memory>
 
+#include "ai_service.h"
 #include "config.h"
 #include "conversation_store.h"
 #include "danmaku_dao.h"
@@ -30,7 +31,8 @@ class HttpApiServer {
                   KafkaProducer* kafka_producer,
                   KafkaProducer* broadcast_producer, DanmakuDao* danmaku_dao,
                   MediaDao* media_dao, S3Client* s3_client,
-                  MediaCache* media_cache, const Config& config);
+                  MediaCache* media_cache, AiService* ai_service,
+                  const Config& config);
     ~HttpApiServer();
 
     void setThreadNum(int numThreads) { server_.setThreadNum(numThreads); }
@@ -83,6 +85,18 @@ class HttpApiServer {
     void handleMediaUploadAbort(const HttpRequest& req, HttpResponse* resp);
     void handleMediaGet(const HttpRequest& req, HttpResponse* resp);
 
+    // P6 AI Companion
+    void handleAiBots(const HttpRequest& req, HttpResponse* resp);
+    void handleAiInvite(const HttpRequest& req, HttpResponse* resp);
+    void handleAiRespond(const HttpRequest& req, HttpResponse* resp);
+    void handleAiRemove(const HttpRequest& req, HttpResponse* resp);
+    void handleAiStatus(const HttpRequest& req, HttpResponse* resp);
+    void handleAiStop(const HttpRequest& req, HttpResponse* resp);
+    void handleInternalAiContext(const HttpRequest& req, HttpResponse* resp);
+    void handleInternalAiDelta(const HttpRequest& req, HttpResponse* resp);
+    void handleInternalAiFinalize(const HttpRequest& req, HttpResponse* resp);
+    void handleInternalAiFail(const HttpRequest& req, HttpResponse* resp);
+
     // 弹幕
     void handleDanmakuSend(const HttpRequest& req, HttpResponse* resp);
     void handleDanmakuList(const HttpRequest& req, HttpResponse* resp);
@@ -102,6 +116,9 @@ class HttpApiServer {
     // 失败自动写 401 响应并返回 0。
     int64_t AuthenticateRequest(const HttpRequest& req, HttpResponse* resp);
 
+    // AI Worker -> Logic 的内部接口鉴权；失败自动写 401。
+    bool RequireInternalAuth(const HttpRequest& req, HttpResponse* resp);
+
     // 会话归属校验（防止越权 IDOR）。失败自动写 403/400/500。
     bool CheckSessionAccess(int64_t user_id, const std::string& session_id,
                             HttpResponse* resp);
@@ -118,6 +135,10 @@ class HttpApiServer {
     MediaDao* media_dao_;
     S3Client* s3_client_;
     MediaCache* media_cache_;
+    AiService* ai_service_;
+    std::string ai_internal_token_;
+    int64_t ai_private_bot_user_id_;
+    int64_t ai_shared_bot_user_id_;
 
     std::string admin_account_;
     std::string admin_password_hash_;

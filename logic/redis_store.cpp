@@ -57,6 +57,50 @@ constexpr const char* kRateLimitLua =
 
 }  // namespace
 
+bool RedisStore::SetSessionBotActive(const std::string& session_id,
+                                     int64_t bot_user_id, bool active,
+                                     int ttl_seconds) {
+    if (!pool_) return false;
+    auto guard = pool_->Acquire();
+    redisContext* ctx = guard.get();
+    if (!ctx) return false;
+    redisReply* reply = (redisReply*)redisCommand(
+        ctx, "SETEX ai:session_bot:{%s}:%lld %d %s", session_id.c_str(),
+        static_cast<long long>(bot_user_id), ttl_seconds,
+        active ? "1" : "0");
+    if (!reply) {
+        LogError("Redis SETEX ai session_bot failed");
+        guard.MarkBroken();
+        return false;
+    }
+    bool ok = (reply->type != REDIS_REPLY_ERROR);
+    freeReplyObject(reply);
+    return ok;
+}
+
+bool RedisStore::GetSessionBotActive(const std::string& session_id,
+                                     int64_t bot_user_id, bool* active) {
+    if (!pool_ || !active) return false;
+    auto guard = pool_->Acquire();
+    redisContext* ctx = guard.get();
+    if (!ctx) return false;
+    redisReply* reply = (redisReply*)redisCommand(
+        ctx, "GET ai:session_bot:{%s}:%lld", session_id.c_str(),
+        static_cast<long long>(bot_user_id));
+    if (!reply) {
+        LogError("Redis GET ai session_bot failed");
+        guard.MarkBroken();
+        return false;
+    }
+    bool found = false;
+    if (reply->type == REDIS_REPLY_STRING && reply->str) {
+        *active = (std::string(reply->str) == "1");
+        found = true;
+    }
+    freeReplyObject(reply);
+    return found;
+}
+
 // 保存 token 到 user_id 的映射并设置过期时间。
 bool RedisStore::SetToken(const std::string& token, int64_t user_id,
                           int ttl_seconds) {

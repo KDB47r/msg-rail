@@ -5,6 +5,8 @@
 #include <string>
 #include <thread>
 
+#include "ai_dao.h"
+#include "ai_service.h"
 #include "config.h"
 #include "conversation_store.h"
 #include "danmaku_dao.h"
@@ -88,6 +90,15 @@ int RunLogic(const Config& cfg) {
         return 1;
     }
 
+    // P6：AI Worker 的任务队列。Logic 只投递紧凑的 ai_trigger 事件，
+    // 不在这里读取历史或调用模型。
+    KafkaProducer ai_trigger_producer;
+    if (!ai_trigger_producer.Init(cfg.kafka_brokers,
+                                  cfg.kafka_ai_trigger_topic)) {
+        LogError("Failed to initialize Kafka AI trigger producer");
+        return 1;
+    }
+
     // 初始化 MySQL 连接池
     MySqlConnectionPool mysql_pool;
     MySqlConfig mc;
@@ -162,6 +173,9 @@ int RunLogic(const Config& cfg) {
 
     ConversationStore conversation_store(&session_dao, &message_dao, &state_dao,
                                          &redis_store);
+    AiDao ai_dao(&mysql_pool);
+    AiService ai_service(cfg, &ai_dao, &user_dao, &conversation_store,
+                         &redis_store, &producer, &ai_trigger_producer);
 
     // 启动 gRPC 服务器（LogicService）
     /*
@@ -182,7 +196,7 @@ int RunLogic(const Config& cfg) {
 
     auto service = std::make_unique<LogicServiceImpl>(
         &conversation_store, &group_member_dao, &user_dao, &friend_service,
-        &producer, &broadcast_producer, &redis_store);
+        &producer, &broadcast_producer, &redis_store, &ai_service);
 
     builder.AddListeningPort(grpc_addr, grpc::InsecureServerCredentials());
     builder.RegisterService(service.get());
@@ -213,7 +227,8 @@ int RunLogic(const Config& cfg) {
                              &conversation_store, &user_dao, &friend_service,
                              &group_dao, &group_member_dao, &redis_store,
                              &producer, &broadcast_producer, &danmaku_dao,
-                             &media_dao, &s3_client, &media_cache, cfg);
+                             &media_dao, &s3_client, &media_cache, &ai_service,
+                             cfg);
     httpServer.setThreadNum(cfg.http_threads);
     LogInfo("Logic HTTP server listening on port " +
             std::to_string(cfg.http_port) + " with " +

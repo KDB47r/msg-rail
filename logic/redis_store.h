@@ -99,6 +99,13 @@ class RedisStore {
     // 实现：Lua 脚本 "先判后写"，一次 RTT，原子
     bool CheckRateLimit(const std::string& key, int window_ms, int max_count);
 
+    // P6 气氛组状态缓存。Get 返回 false 表示 key 不存在（需要回源
+    // MySQL）；active 仅在 value="1" 时为 true。
+    bool SetSessionBotActive(const std::string& session_id, int64_t bot_user_id,
+                             bool active, int ttl_seconds = 600);
+    bool GetSessionBotActive(const std::string& session_id,
+                             int64_t bot_user_id, bool* active);
+
    private:
     // 从Redis查询路由（内部方法）
     bool GetUserRoutesFromRedis(int64_t user_id,

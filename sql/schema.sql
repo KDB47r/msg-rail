@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS `user` (
   `name` VARCHAR(64) NOT NULL DEFAULT '',
   `avatar_media_id` VARCHAR(32) NOT NULL DEFAULT '',
   `password_hash` VARCHAR(128) NOT NULL,
+  `is_bot` TINYINT NOT NULL DEFAULT 0,
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_account` (`account`),
@@ -76,6 +77,47 @@ CREATE TABLE IF NOT EXISTS `message` (
   UNIQUE KEY `uk_session_seq` (`session_id`, `msg_seq`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 气氛组 bot 与 A-B 单聊的绑定关系：0=pending,1=active,2=rejected,3=removed
+CREATE TABLE IF NOT EXISTS `session_bot` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `session_id` VARCHAR(128) NOT NULL,
+  `bot_user_id` BIGINT NOT NULL,
+  `status` TINYINT NOT NULL DEFAULT 0,
+  `invited_by` BIGINT NOT NULL,
+  `activated_seq` BIGINT NOT NULL DEFAULT 0,
+  `activated_at` TIMESTAMP NULL DEFAULT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_session_bot` (`session_id`, `bot_user_id`),
+  KEY `idx_session_status` (`session_id`, `status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- AI 任务幂等/审计：同一条触发消息对同一个 bot 只生成一次回复
+CREATE TABLE IF NOT EXISTS `ai_job` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `job_id` VARCHAR(64) NOT NULL,
+  `session_id` VARCHAR(128) NOT NULL,
+  `bot_user_id` BIGINT NOT NULL,
+  `mode` VARCHAR(16) NOT NULL,
+  `trigger_message_id` VARCHAR(160) NOT NULL,
+  `trigger_sender_id` BIGINT NOT NULL,
+  `trigger_sender_name` VARCHAR(128) NOT NULL DEFAULT '',
+  `trigger_content` TEXT NOT NULL,
+  `activated_seq` BIGINT NOT NULL DEFAULT 0,
+  `status` VARCHAR(16) NOT NULL DEFAULT 'queued',
+  `msg_id` VARCHAR(160) NOT NULL DEFAULT '',
+  `msg_seq` BIGINT NOT NULL DEFAULT 0,
+  `error_code` VARCHAR(64) NOT NULL DEFAULT '',
+  `error_message` VARCHAR(512) NOT NULL DEFAULT '',
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_ai_job` (`job_id`),
+  UNIQUE KEY `uk_trigger_bot` (`session_id`, `trigger_message_id`, `bot_user_id`),
+  KEY `idx_ai_job_status` (`status`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- 用户会话状态表：记录每个用户在每个会话的已读游标
 CREATE TABLE IF NOT EXISTS `user_session_state` (
   `id` BIGINT NOT NULL AUTO_INCREMENT,
@@ -111,6 +153,16 @@ CREATE TABLE IF NOT EXISTS `group_member` (
   UNIQUE KEY `uk_group_user` (`group_id`, `user_id`),
   KEY `idx_user` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- P6 预置两个 bot 用户。显示名都叫“小桁”，但 ID/账号/人设独立。
+-- 固定 ID 让 Logic 热路径可以 O(1) 判断，不需要每条消息查库。
+INSERT INTO `user` (`id`, `account`, `name`, `avatar_media_id`, `password_hash`, `is_bot`)
+VALUES
+  (910000000000001, 'ai_assistant', '小桁', '', '', 1),
+  (910000000000002, 'ai_vibe', '小桁', '', '', 1)
+ON DUPLICATE KEY UPDATE
+  `name` = VALUES(`name`),
+  `is_bot` = 1;
 
 -- 弹幕表（V3：按视频时间轴拉取）
 CREATE TABLE IF NOT EXISTS `video_danmaku` (

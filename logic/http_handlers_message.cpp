@@ -227,6 +227,8 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
     std::string content;
     std::string media_id;
     std::string caption;
+    nlohmann::json mentions;
+    bool has_mentions = false;
     try {
         if (!j.contains("to_user_id")) {
             WriteError(resp, 400, "to_user_id required");
@@ -257,6 +259,10 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
             WriteError(resp, 400, "unsupported msg_type: " + msg_type);
             return;
         }
+        if (j.contains("mentions") && j["mentions"].is_array()) {
+            mentions = j["mentions"];
+            has_mentions = true;
+        }
     } catch (const nlohmann::json::exception& e) {
         WriteError(resp, 400, "invalid json fields in message send");
         return;
@@ -283,21 +289,30 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
         return;
     }
 
-    // 单聊只允许好友：与 gRPC 上行路径保持同一权限规则。
-    if (!friend_service_) {
-        WriteError(resp, 500, "friend service not initialized");
+    if (ai_service_ && ai_service_->IsSharedBot(to_user)) {
+        WriteError(resp, 400, "shared bot cannot be used as a 1:1 peer");
         return;
     }
-    bool is_friend = false;
-    std::string friend_err;
-    if (!friend_service_->AreFriends(from_user, to_user, &is_friend,
-                                     &friend_err)) {
-        WriteError(resp, 500, "check friendship failed: " + friend_err);
-        return;
-    }
-    if (!is_friend) {
-        WriteError(resp, 403, "only friends can send single chat messages");
-        return;
+    const bool private_bot_target =
+        ai_service_ && ai_service_->IsPrivateBot(to_user);
+
+    // 单聊只允许好友；私人 AI 助手是固定 bot 联系人，不需要好友关系。
+    if (!private_bot_target) {
+        if (!friend_service_) {
+            WriteError(resp, 500, "friend service not initialized");
+            return;
+        }
+        bool is_friend = false;
+        std::string friend_err;
+        if (!friend_service_->AreFriends(from_user, to_user, &is_friend,
+                                         &friend_err)) {
+            WriteError(resp, 500, "check friendship failed: " + friend_err);
+            return;
+        }
+        if (!is_friend) {
+            WriteError(resp, 403, "only friends can send single chat messages");
+            return;
+        }
     }
 
     if (!redis_store_ || !kafka_producer_) {
@@ -434,6 +449,7 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
     } else {
         push_j["content"] = content;
         push_j["msg_type"] = "text";
+        if (has_mentions) push_j["mentions"] = mentions;
     }
     push_j["create_time"] = now_ms;
     std::string push_json = push_j.dump();
@@ -532,6 +548,21 @@ void HttpApiServer::handleSendMessage(const HttpRequest& req,
         }
         WriteError(resp, 500, "send message to kafka failed");
         return;
+    }
+
+    // 用户消息已经进入发送链路，异步触发 AI。失败只记录，不回滚用户消息。
+    if (!is_media && ai_service_) {
+        if (private_bot_target) {
+            if (!ai_service_->TriggerPrivate(session_id, from_user, to_user,
+                                             msg_id, push_json)) {
+                LogError("AI private trigger failed session=" + session_id);
+            }
+        } else if (msg_type == "text") {
+            if (!ai_service_->MaybeTriggerShared(session_id, from_user, to_user,
+                                                 msg_id, push_json)) {
+                LogError("AI shared trigger failed session=" + session_id);
+            }
+        }
     }
 
     nlohmann::json data{

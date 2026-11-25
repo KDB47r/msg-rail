@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "ai_service.h"
 #include "conversation_store.h"
 #include "friend_service.h"
 #include "group_dao.h"
@@ -24,7 +25,7 @@ class LogicServiceImpl final : public sparkpush::LogicService::Service {
                      UserDao* user_dao, FriendService* friend_service,
                      KafkaProducer* producer,
                      KafkaProducer* broadcast_producer,
-                     RedisStore* redis_store);
+                     RedisStore* redis_store, AiService* ai_service);
 
     // token 校验：demo 规则为 "token-<user_id>"
     ::grpc::Status VerifyToken(
@@ -86,6 +87,7 @@ class LogicServiceImpl final : public sparkpush::LogicService::Service {
     KafkaProducer* producer_;
     KafkaProducer* broadcast_producer_;
     RedisStore* redis_store_;
+    AiService* ai_service_;
 };
 
 }  // namespace sparkpush

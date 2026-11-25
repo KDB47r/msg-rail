@@ -75,6 +75,11 @@ void HttpApiServer::handleLogin(const HttpRequest& req, HttpResponse* resp) {
         return;
     }
 
+    if (ai_service_ && ai_service_->IsBot(user.id)) {
+        WriteError(resp, 403, "bot accounts cannot login");
+        return;
+    }
+
     // 这里约定 password 已经是前端做过 MD5 的
     // hash（示例实现，真实业务还需加盐、迭代等）
     if (user.password_hash != password) {
