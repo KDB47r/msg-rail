@@ -14,8 +14,10 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+LOG_DIR="$PROJECT_ROOT/logs"
 SCHEMA_FILE="$PROJECT_ROOT/sql/schema.sql"
 REDIS_RDB_FILE="$PROJECT_ROOT/logs/dump.rdb"
+AI_COMPANION_DIR="${AI_COMPANION_DIR:-$PROJECT_ROOT/ai_companion}"
 KAFKA_HOME="${KAFKA_HOME:-$HOME/software/kafka_2.13-4.1.2}"
 MYSQL_HOST="${MYSQL_HOST:-localhost}"
 MYSQL_PORT="${MYSQL_PORT:-3306}"
@@ -65,6 +67,40 @@ stop_process() {
             break
         fi
     done
+}
+
+# 优先使用启动脚本写下的 PID，避免 pkill python 误伤其他 Python 进程。
+stop_pidfile() {
+    local name=$1 pidfile="$LOG_DIR/$2.pid" fallback_pattern=$3
+    if [ -f "$pidfile" ]; then
+        local pid
+        pid=$(cat "$pidfile" 2>/dev/null || true)
+        if [ -n "${pid:-}" ] && kill -0 "$pid" 2>/dev/null; then
+            log_info "停止 $name (pid=$pid)..."
+            kill "$pid" 2>/dev/null || true
+            local count=0
+            while kill -0 "$pid" 2>/dev/null; do
+                sleep 1
+                count=$((count + 1))
+                if [ "$count" -ge 8 ]; then
+                    log_warn "$name 未在 8s 内退出,强制结束"
+                    kill -9 "$pid" 2>/dev/null || true
+                    break
+                fi
+            done
+        fi
+        rm -f "$pidfile"
+    fi
+
+    if [ -n "${fallback_pattern:-}" ] && pgrep -f "$fallback_pattern" >/dev/null; then
+        log_warn "按进程特征停止残留 $name: $fallback_pattern"
+        pkill -f "$fallback_pattern" 2>/dev/null || true
+    fi
+}
+
+stop_ai_services() {
+    stop_pidfile "AI Worker" "ai_worker" "app.worker.ai_worker"
+    stop_pidfile "AI Companion" "ai_companion" "uvicorn app.asgi:app"
 }
 
 setup_java() {
@@ -209,6 +245,8 @@ clean_mysql() {
 
 main() {
     local failed=0 kafka_stopped=true
+
+    stop_ai_services
 
     stop_process web_demo_server
     stop_process media_worker

@@ -21,6 +21,9 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$PROJECT_ROOT/build"
 CONF_DIR="$PROJECT_ROOT/conf"
 LOG_DIR="$PROJECT_ROOT/logs"
+AI_COMPANION_DIR="${AI_COMPANION_DIR:-$PROJECT_ROOT/ai_companion}"
+AI_COMPANION_PYTHON="${AI_COMPANION_PYTHON:-$AI_COMPANION_DIR/.venv/bin/python}"
+AI_COMPANION_PORT=8000
 PROJECT_SOFTWARE="$PROJECT_ROOT/cmake/software_spark_push"
 KAFKA_HOME="${KAFKA_HOME:-}"
 WEB_DEMO_PORT=9001
@@ -239,6 +242,112 @@ check_mysql() {
     exit 1
 }
 
+check_postgres() {
+    if check_port 5432 "PostgreSQL (AI Companion)"; then
+        return 0
+    fi
+    log_warn "PostgreSQL 未运行,跳过 AI Companion/AI Worker"
+    log_warn "AI Companion 需要 PostgreSQL: sudo systemctl start postgresql"
+    return 1
+}
+
+# 本地开发允许临时复用外部 AI_Companion 的 venv；生产仍应在 monorepo 内建独立 venv。
+resolve_ai_companion_python() {
+    if [ -x "$AI_COMPANION_PYTHON" ]; then
+        return 0
+    fi
+    local external_python="$HOME/Linux/AI_Companion/.venv/bin/python"
+    if [ -x "$external_python" ]; then
+        log_warn "ai_companion/.venv 不存在,临时使用外部 venv: $external_python"
+        AI_COMPANION_PYTHON="$external_python"
+        return 0
+    fi
+    return 1
+}
+
+# AI Companion 独立于 Logic 热路径，启动失败只告警，不阻塞普通 IM。
+start_ai_companion() {
+    if port_open "$AI_COMPANION_PORT"; then
+        log_info "AI Companion 已运行"
+        return 0
+    fi
+    if [ ! -d "$AI_COMPANION_DIR" ]; then
+        log_warn "找不到 $AI_COMPANION_DIR,跳过 AI Companion"
+        return 0
+    fi
+    if [ ! -f "$AI_COMPANION_DIR/.env" ]; then
+        log_warn "缺少 $AI_COMPANION_DIR/.env,跳过 AI Companion"
+        log_warn "可执行: cp ~/Linux/AI_Companion/.env $AI_COMPANION_DIR/.env && chmod 600 $AI_COMPANION_DIR/.env"
+        return 0
+    fi
+    if ! resolve_ai_companion_python; then
+        log_warn "找不到 AI Companion Python: $AI_COMPANION_PYTHON"
+        log_warn "创建命令: cd $AI_COMPANION_DIR && python3 -m venv .venv && .venv/bin/pip install -e '.[dev,worker]'"
+        return 0
+    fi
+    if ! check_postgres; then
+        return 0
+    fi
+
+    log_info "启动 AI Companion..."
+    cd "$AI_COMPANION_DIR"
+    env -u http_proxy -u https_proxy -u all_proxy \
+        -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+        setsid nohup "$AI_COMPANION_PYTHON" -m uvicorn \
+        app.asgi:app --host 127.0.0.1 --port "$AI_COMPANION_PORT" \
+        > "$LOG_DIR/ai_companion.out" 2>&1 < /dev/null &
+    echo $! > "$LOG_DIR/ai_companion.pid"
+
+    if wait_for_port "$AI_COMPANION_PORT" "AI Companion" 30; then
+        if command -v curl >/dev/null 2>&1 && \
+           ! curl -fsS --max-time 3 \
+               "http://127.0.0.1:$AI_COMPANION_PORT/healthz" >/dev/null; then
+            log_warn "AI Companion 端口已开,但 /healthz 未通过; 查看 $LOG_DIR/ai_companion.out"
+        fi
+    else
+        log_warn "AI Companion 启动失败,查看 $LOG_DIR/ai_companion.out"
+        return 1
+    fi
+}
+
+start_ai_worker() {
+    if pgrep -f "app.worker.ai_worker" >/dev/null; then
+        log_info "AI Worker 已运行"
+        return 0
+    fi
+    if ! resolve_ai_companion_python; then
+        log_warn "找不到 AI Companion Python,跳过 AI Worker"
+        return 0
+    fi
+    if ! port_open "$AI_COMPANION_PORT"; then
+        log_warn "AI Companion 未运行,跳过 AI Worker"
+        return 0
+    fi
+    if ! port_open 9101; then
+        log_warn "Logic HTTP 9101 未运行,跳过 AI Worker"
+        return 0
+    fi
+    if ! "$AI_COMPANION_PYTHON" -c "import aiokafka" >/dev/null 2>&1; then
+        log_warn "AI Worker 缺少 aiokafka,跳过启动"
+        log_warn "安装命令: $AI_COMPANION_PYTHON -m pip install \"aiokafka>=0.10\""
+        return 0
+    fi
+
+    log_info "启动 AI Worker..."
+    cd "$AI_COMPANION_DIR"
+    env -u http_proxy -u https_proxy -u all_proxy \
+        -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+        setsid nohup "$AI_COMPANION_PYTHON" -m app.worker.ai_worker \
+        > "$LOG_DIR/ai_worker.out" 2>&1 < /dev/null &
+    echo $! > "$LOG_DIR/ai_worker.pid"
+    sleep 2
+    if pgrep -f "app.worker.ai_worker" >/dev/null; then
+        log_info "AI Worker 启动成功"
+    else
+        log_warn "AI Worker 启动失败,查看 $LOG_DIR/ai_worker.out"
+    fi
+}
+
 # 应用服务统一从项目根目录启动,配置文件与 logs/ 目录都用相对路径
 start_service() {
     local name=$1 binary=$2 conf=$3
@@ -302,7 +411,10 @@ main() {
     start_minio
     setup_minio_bucket
 
-    # 应用服务:Logic -> Comet -> Job -> media_worker
+    # AI Companion 独立于 IM 热路径；未配置时只告警，不阻塞普通聊天。
+    start_ai_companion || true
+
+    # 应用服务:Logic -> Comet -> Job -> AI Worker -> media_worker
     start_service logic_server "$BUILD_DIR/logic/logic_server" "$CONF_DIR/logic.conf"
     wait_for_port 9100 "Logic gRPC"
     wait_for_port 9101 "Logic HTTP"
@@ -319,6 +431,9 @@ main() {
         log_error "Job Server 启动失败,查看 $LOG_DIR/job_server.out"
         exit 1
     fi
+
+    # Worker 依赖 Kafka、Logic HTTP、AI Companion 和 Job。
+    start_ai_worker || true
 
     if ! command -v ffprobe >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
         log_warn "未找到 ffprobe/ffmpeg,视频消息会处理失败; 安装命令: sudo apt install -y ffmpeg"
@@ -347,6 +462,8 @@ main() {
     echo "  - Comet gRPC:  localhost:9205"
     echo "  - Kafka:       localhost:9092 (KRaft,无 ZooKeeper)"
     echo "  - MinIO S3:    http://localhost:$MINIO_PORT  (console :$MINIO_CONSOLE_PORT)"
+    echo "  - AI Companion: http://127.0.0.1:$AI_COMPANION_PORT"
+    echo "  - AI Worker:   see $LOG_DIR/ai_worker.out"
     echo ""
     echo "日志目录: $LOG_DIR/"
     echo "查看状态: ./scripts/status.sh"
